@@ -78,6 +78,15 @@ export interface MeshTexture {
   png: string | null;
 }
 
+export interface SkyBox {
+  up: string;
+  down: string;
+  left: string;
+  right: string;
+  front: string;
+  back: string;
+}
+
 export interface MeshDetail {
   /** xyz por vértice, 9 floats por triângulo */
   positions: number[];
@@ -88,6 +97,10 @@ export interface MeshDetail {
   textures: MeshTexture[];
   spawns: SpawnPoint[];
   bounds: Bounds | null;
+  /** céu do mapa (gfx/env), quando existe */
+  skybox: SkyBox | null;
+  /** quantas texturas vieram de WAD externo */
+  wad_textures: number;
   triangles: number;
   skipped: number;
 }

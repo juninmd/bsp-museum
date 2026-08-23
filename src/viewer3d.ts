@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { MeshDetail } from "./types.ts";
+import type { MeshDetail, SkyBox } from "./types.ts";
 
 export interface Viewer3D {
   setTextured(on: boolean): void;
@@ -105,14 +105,17 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0d1117);
-  scene.fog = new THREE.Fog(0x0d1117, 4000, 20000);
 
   const camera = new THREE.PerspectiveCamera(60, 1, 0.5, 100000);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+  // Luz ambiente alta + hemisférica: sem isso o chão (mais baixo, cor fria) vira
+  // um vulto escuro sobre o fundo escuro e some de vista.
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x33373d, 0.6);
+  scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xffffff, 0.9);
   sun.position.set(1, 2, 1.4);
   scene.add(sun);
@@ -125,6 +128,7 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
     roughness: 0.95,
     metalness: 0,
     flatShading: true,
+    side: THREE.DoubleSide,
   });
 
   const textures = buildTextures(mesh);
@@ -142,6 +146,7 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
       color: tex ? 0xffffff : 0x8b98a5,
       roughness: 0.9,
       metalness: 0,
+      side: THREE.DoubleSide,
       map: tex ?? null,
     });
 
@@ -176,6 +181,10 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
   controls.update();
   controls.minDistance = Math.max(4, dist / 8);
   controls.maxDistance = dist * 6;
+
+  // Céu: a caixa real do mapa (gfx/env) se existir; senão um domo gradiente.
+  const sky = loadSky(center, maxDim, mesh.skybox);
+  scene.add(sky);
 
   function spawnRadius(m: MeshDetail): number {
     const s: [number, number, number] = m.bounds ? m.bounds.size : [256, 256, 128];
@@ -222,6 +231,8 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
         (e.texMaterial.map as THREE.Texture | null)?.dispose();
       }
       flatMaterial.dispose();
+      scene.remove(sky);
+      disposeSky(sky);
       for (const s of spawnGroup.children) {
         (s as THREE.Mesh).geometry.dispose();
         ((s as THREE.Mesh).material as THREE.Material).dispose();
@@ -247,4 +258,74 @@ function fitTarget(mesh: MeshDetail): { center: [number, number, number]; size: 
     center: [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2],
     size: [maxX - minX, maxY - minY, maxZ - minZ],
   };
+}
+
+/** Céu do mapa: a caixa `gfx/env` de 6 lados quando existe, senão domo gradiente. */
+function loadSky(
+  center: [number, number, number],
+  maxDim: number,
+  skybox: SkyBox | null,
+): THREE.Mesh {
+  const radius = Math.max(maxDim * 12, 600);
+  if (skybox) {
+    // Ordem do BoxGeometry: [+x direita, -x esquerda, +y cima, -y baixo, +z frente, -z trás]
+    const urls = [skybox.right, skybox.left, skybox.up, skybox.down, skybox.front, skybox.back];
+    const materials = urls.map(
+      (url) =>
+        new THREE.MeshBasicMaterial({
+          map: new THREE.TextureLoader().load(url),
+          side: THREE.BackSide,
+          depthWrite: false,
+          fog: false,
+        }),
+    );
+    const cube = new THREE.Mesh(new THREE.BoxGeometry(radius * 2, radius * 2, radius * 2), materials);
+    cube.position.set(center[0], center[1], center[2]);
+    cube.renderOrder = -1;
+    cube.frustumCulled = false;
+    cube.name = "skybox";
+    return cube;
+  }
+  return makeSkyDome(center, radius);
+}
+
+/** Domo celeste de reserva: esfera gigante com um gradiente vertical, vista por dentro. */
+function makeSkyDome(center: [number, number, number], radius: number): THREE.Mesh {
+  const canvas = document.createElement("canvas");
+  canvas.width = 2;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const grad = ctx.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, "#3a6ea5");
+    grad.addColorStop(0.55, "#9cc4e8");
+    grad.addColorStop(1, "#e3edf6");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 2, 256);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.MeshBasicMaterial({
+    map: tex,
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+  });
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(radius, 32, 16), material);
+  dome.position.set(center[0], center[1], center[2]);
+  dome.renderOrder = -1;
+  dome.frustumCulled = false;
+  dome.name = "sky-dome";
+  return dome;
+}
+
+/** Libera geometria/materiais/texturas do céu (caixa ou domo). */
+function disposeSky(obj: THREE.Mesh): void {
+  obj.geometry.dispose();
+  const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+  for (const m of mats) {
+    const mat = m as THREE.MeshBasicMaterial;
+    mat.map?.dispose();
+    mat.dispose();
+  }
 }

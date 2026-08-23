@@ -861,6 +861,8 @@ fn malha_acervo() {
     let mut total_tris = 0usize;
     let mut pior_payload = 0usize;
     let mut pior_nome = String::new();
+    let mut wad_total = 0usize;
+    let mut skyboxes = 0usize;
     let started = std::time::Instant::now();
 
     for file in &files {
@@ -872,6 +874,10 @@ fn malha_acervo() {
                 }
                 malhas += 1;
                 total_tris += mesh.triangles;
+                wad_total += mesh.wad_textures;
+                if mesh.skybox.is_some() {
+                    skyboxes += 1;
+                }
                 assert_eq!(
                     mesh.positions.len() % 9,
                     0,
@@ -898,7 +904,7 @@ fn malha_acervo() {
 
     let ms = started.elapsed().as_millis();
     println!(
-        "malha: {malhas} geradas, {} triângulos, {vazias} vazias, {com_pixels} texturas com pixels, pior payload {:.1} MB ({pior_nome}), em {ms} ms",
+        "malha: {malhas} geradas, {} triângulos, {vazias} vazias, {com_pixels} texturas com pixels, {wad_total} de WAD, {skyboxes} skybox, pior payload {:.1} MB ({pior_nome}), em {ms} ms",
         total_tris,
         pior_payload as f64 / (1024.0 * 1024.0)
     );
@@ -964,6 +970,135 @@ fn base64_decode(s: &str) -> Vec<u8> {
 
 fn sanitize(s: &str) -> String {
     s.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect()
+}
+
+#[test]
+#[ignore = "precisa de uma pasta de mapas de verdade"]
+fn diagnostica_chao_ceu() {
+    let Ok(dir) = std::env::var("BSP_MUSEUM_MAPS") else {
+        eprintln!("defina BSP_MUSEUM_MAPS");
+        return;
+    };
+    let root = std::path::PathBuf::from(dir);
+    let files = catalog::find_bsp_files(&root);
+    assert!(!files.is_empty());
+
+    // 1) Um mapa real: o que usam as faces "de chão" (normal +Z) e por que somem.
+    let path = &files[0];
+    let bytes = std::fs::read(path).unwrap();
+    let bsp = Bsp::parse(&bytes).unwrap();
+    let parsed = crate::bsp::entities::parse(&bsp.entities_raw);
+    let summary = crate::bsp::entities::summarize(&parsed);
+
+    let mut floors = 0usize;
+    let mut floor_invisible = 0usize;
+    let mut floor_no_tex = 0usize;
+    let mut floor_embedded = 0usize;
+    let mut floor_names = std::collections::BTreeSet::new();
+    for face in &bsp.faces {
+        let Some(p) = bsp.face_polygon(face) else { continue };
+        if p.len() < 3 {
+            continue;
+        }
+        // Newell + eu só quero o sinal de Z.
+        let mut nz = 0.0f32;
+        for i in 0..p.len() {
+            let a = p[i];
+            let b = p[(i + 1) % p.len()];
+            nz += (a[0] - b[0]) * (a[1] + b[1]);
+        }
+        if nz < 0.0 {
+            continue; // teto
+        }
+        if nz.abs() < (f32::EPSILON * 100.0) {
+            // parede vertical
+            continue;
+        }
+        floors += 1;
+        match bsp.texture_of(face) {
+            Some(tex) => {
+                floor_names.insert(tex.name.clone());
+                if crate::bsp::render::is_invisible(&tex.name) {
+                    floor_invisible += 1;
+                } else if tex.embedded {
+                    floor_embedded += 1;
+                } else {
+                    floor_no_tex += 1;
+                }
+            }
+            None => floor_no_tex += 1,
+        }
+    }
+    println!("diagno: mapa={} | chao(face +Z em cima)={} | invisivel={} | sem_textura={} | embutida={}", files[0].file_stem().unwrap_or_default().to_string_lossy(), floors, floor_invisible, floor_no_tex, floor_embedded);
+    println!("diagno: nomes de textura do chao = {:?}", floor_names.into_iter().collect::<Vec<_>>());
+
+    // 2) Na malha enviada ao frontend: a normal dos triângulos que estão num
+    // plano baixo (y pequeno) aponta para cima (+Y) ou para baixo?
+    let mesh = catalog::mesh(path).unwrap();
+    let mut up = 0usize;
+    let mut down = 0usize;
+    let mut other = 0usize;
+    for tri in 0..mesh.triangles {
+        let p0 = tri * 9;
+        let a = (&mesh.positions[p0], &mesh.positions[p0 + 1], &mesh.positions[p0 + 2]);
+        let b = (&mesh.positions[p0 + 3], &mesh.positions[p0 + 4], &mesh.positions[p0 + 5]);
+        let c = (&mesh.positions[p0 + 6], &mesh.positions[p0 + 7], &mesh.positions[p0 + 8]);
+        let ymin = (*a.1).min(*b.1).min(*c.1);
+        // Só olha o teto/chão (triângulos quase no mesmo plano horizontal).
+        let dy1 = (*b.1 - *a.1).abs();
+        let dy2 = (*c.1 - *a.1).abs();
+        if dy1 > 0.5 || dy2 > 0.5 {
+            other += 1;
+            continue;
+        }
+        let (uax, uay, uaz) = (*b.0 - *a.0, *b.1 - *a.1, *b.2 - *a.2);
+        let (ubx, uby, ubz) = (*c.0 - *a.0, *c.1 - *a.1, *c.2 - *a.2);
+        let ny = uaz * ubx - uax * ubz; // componente Y do cross product
+        if ny < 0.0 {
+            down += 1;
+        } else {
+            up += 1;
+        }
+        let _ = ymin;
+    }
+    println!("diagno: tri perpendicular ao eixo Y: para_cima(+Y)={up} para_baixo(-Y)={down} (fora do plano)={other} | total={}", mesh.triangles);
+    println!("diagno: texcom_pixels=`{}`", mesh.textures.iter().filter(|t| t.png.is_some()).count());
+    println!("diagno: spawns={}", summary.spawns.len());
+}
+
+#[test]
+#[ignore = "precisa de uma pasta de mapas de verdade"]
+fn dump_sky() {
+    let Ok(dir) = std::env::var("BSP_MUSEUM_MAPS") else {
+        eprintln!("defina BSP_MUSEUM_MAPS");
+        return;
+    };
+    let Ok(out) = std::env::var("BSP_MUSEUM_OUT") else {
+        eprintln!("defina BSP_MUSEUM_OUT");
+        return;
+    };
+    let _ = std::fs::create_dir_all(&out);
+    let files = catalog::find_bsp_files(&std::path::PathBuf::from(dir));
+    for file in files.iter().take(3) {
+        if let Ok(mesh) = catalog::mesh(file) {
+            let Some(sb) = &mesh.skybox else { continue };
+            let base = file.file_stem().unwrap_or_default().to_string_lossy();
+            let faces: [(&str, &String); 6] = [
+                ("up", &sb.up),
+                ("down", &sb.down),
+                ("left", &sb.left),
+                ("right", &sb.right),
+                ("front", &sb.front),
+                ("back", &sb.back),
+            ];
+            for (kind, data_url) in faces {
+                if let Some(b64) = data_url.strip_prefix("data:image/png;base64,") {
+                    let name = format!("{base}__sky_{kind}.png");
+                    let _ = std::fs::write(std::path::Path::new(&out).join(&name), base64_decode(b64));
+                }
+            }
+        }
+    }
 }
 
 #[test]

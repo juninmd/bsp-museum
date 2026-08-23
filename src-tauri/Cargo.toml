@@ -1,6 +1,6 @@
 [package]
 name = "bsp-museum"
-version = "0.2.0"
+version = "0.3.0"
 description = "Galeria navegável do acervo de mapas GoldSrc: planta baixa, entidades e diagnóstico"
 edition = "2021"
 rust-version = "1.77"

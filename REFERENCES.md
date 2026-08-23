@@ -19,6 +19,18 @@ Documentação e fontes usadas para implementar a vista 3D e a decodificação d
   `t = vecs[1][0]*x + vecs[1][1]*y + vecs[1][2]*z + vecs[1][3]`, normalizado pelo `width/height`
   da textura. É a mesma transformação que o motor usa para amostrar o conjunto de mip.
 
+- **WAD (Quake/Half-Life `WAD2`/`WAD3`)** — cabeçalho de 12 bytes (`magic`, `numlumps`,
+  `infotableofs`); cada lump de tipo `'C'` é uma textura `miptex` (name + mip chain + paleta de
+  256 cores que fecha o lump). O BSP guarda o **nome** da textura de WAD (offset de mip `0`), o que
+  permite resolver o pixel no `.wad` externo que o mapa declara no worldspawn:
+  - <https://qtools.github.io/wadtool/format.html> (formato de WAD Quake/HL)
+
+- **Skybox do GoldSrc/CS 1.6** — o worldspawn declara `skyname`; o motor monta uma caixa com
+  `<skyname>_{up,dn,lf,rt,ft,bk}.tga` (ou `.bmp`) em `gfx/env`. A convenção varia entre
+  `<skyname>up.tga` e `<skyname>_up.tga`. TGA: cabeçalho de 18 bytes, truecolor/RLE (tipos 2/3/10/11),
+  24/32-bit, com origem controlada pelo bit `0x20` do dezcriptor.
+  - <https://en.wikipedia.org/wiki/Truevision_TGA> (formato TGA)
+
 ## Renderização 3D no frontend
 
 - **Three.js** (`three` + `@types/three`): cena, `PerspectiveCamera`, `WebGLRenderer`,

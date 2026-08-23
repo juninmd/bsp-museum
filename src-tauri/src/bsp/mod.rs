@@ -1,6 +1,8 @@
 pub mod entities;
 pub mod reader;
 pub mod render;
+pub mod sky;
+pub mod wad;
 
 use base64::Engine as _;
 use reader::{BspError, Cursor, Result};
@@ -91,6 +93,9 @@ pub struct Bsp {
     /// vértice do mundo em coordenada UV da textura.
     pub texinfo_vecs: Vec<[[f32; 4]; 2]>,
     pub textures: Vec<Texture>,
+    /// nome de cada textura da tabela crua (índice do texinfo). Vazio quando a
+    /// entrada não existe no BSP (`offset -1`) — o nome vive no WAD.
+    pub raw_texture_name: Vec<String>,
     pub models: Vec<Model>,
 }
 
@@ -209,7 +214,7 @@ impl Bsp {
             cur.skip(4)?; // flags
         }
 
-        let textures = read_textures(data, lumps[LUMP_TEXTURES])?;
+        let (textures, raw_texture_name) = read_textures(data, lumps[LUMP_TEXTURES])?;
         let models = read_models(data, lumps[LUMP_MODELS])?;
 
         Ok(Bsp {
@@ -223,6 +228,7 @@ impl Bsp {
             texinfo_miptex,
             texinfo_vecs,
             textures,
+            raw_texture_name,
             models,
         })
     }
@@ -278,9 +284,13 @@ fn read_models(data: &[u8], lump: Lump) -> Result<Vec<Model>> {
 }
 
 /// Lump de texturas: tabela de offsets + miptex. Offset -1 marca entrada ausente.
-fn read_textures(data: &[u8], lump: Lump) -> Result<Vec<Texture>> {
+///
+/// Devolve a lista compacta (só entradas com bloco no BSP) e, alinhada à tabela
+/// crua, o nome de cada textura — inclusive as que vêm de WAD (mip ausente), o
+/// que é o que permite resolver o pixel no WAD lá fora.
+fn read_textures(data: &[u8], lump: Lump) -> Result<(Vec<Texture>, Vec<String>)> {
     if lump.length == 0 {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let raw = lump_slice(data, lump, "textures")?;
     let mut cur = Cursor::new(raw);
@@ -300,21 +310,27 @@ fn read_textures(data: &[u8], lump: Lump) -> Result<Vec<Texture>> {
     }
 
     let mut textures = Vec::with_capacity(count);
+    let mut raw_texture_name = Vec::with_capacity(count);
     for offset in offsets {
         if offset < 0 {
+            raw_texture_name.push(String::new());
             continue;
         }
         let at = offset as usize;
-        let Some(entry) = raw.get(at..) else { continue };
+        let Some(entry) = raw.get(at..) else {
+            raw_texture_name.push(String::new());
+            continue;
+        };
         let mut mip = Cursor::new(entry);
-        let Ok(name) = mip.fixed_str(16) else { continue };
+        let name = mip.fixed_str(16).unwrap_or_default();
         let Ok(width) = mip.u32() else { continue };
         let Ok(height) = mip.u32() else { continue };
         let Ok(first_offset) = mip.u32() else { continue };
         // offset de pixel 0 = textura vem de WAD externo; != 0 = embutida no BSP.
-        textures.push(Texture { name, width, height, embedded: first_offset != 0 });
+        textures.push(Texture { name: name.clone(), width, height, embedded: first_offset != 0 });
+        raw_texture_name.push(name);
     }
-    Ok(textures)
+    Ok((textures, raw_texture_name))
 }
 
 /// Imagem de uma textura, decodificada e comprimida, pronta para o WebView.
@@ -392,10 +408,14 @@ pub fn texture_image(data: &[u8], lump: Lump, texindex: usize) -> Option<Texture
     })
 }
 
-/// PNG mínimo, comprimido com blocos *stored* (sem zlib real).
-///
-/// Um JPEG de foto de parede não precisa de deflate; o que importa aqui é a
-/// textura subir para o WebView do jeito que todos os carregadores conhecem.
+/// `data:image/png;base64,...` a partir de pixels RGBA. Usado pela textura do
+/// BSP, pelos WADs e pelo skybox — tudo vira PNG para o `TextureLoader`.
+pub(crate) fn rgba_png(width: usize, height: usize, rgba: &[u8]) -> Option<String> {
+    let png = png_encode(width, height, rgba)?;
+    let png = base64::engine::general_purpose::STANDARD.encode(&png);
+    Some(format!("data:image/png;base64,{png}"))
+}
+
 fn png_encode(width: usize, height: usize, rgba: &[u8]) -> Option<Vec<u8>> {
     let stride = width.checked_mul(4)?;
     let mut scan = Vec::with_capacity((stride + 1) * height);

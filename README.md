@@ -46,9 +46,10 @@ fino e os spawns como bolinhas (azul CT, laranja T).
 
 **Vista 3D.** Cada mapa tem um viewport **WebGL** orbitável (arraste para girar, scroll para zoom).
 Dois modos: *3D* mostra a geometria colorida por altura — você enxerga um *biowall* por cima, uma
-passarela no ar, um teto que a planta escondia; *3D + texturas* aplica os **pixels embutidos no
-BSP** diretamente nas faces, então o mapa aparece com a textura real que o mapper pôs nele.
-Textura que vem de WAD externo (sem pixels no BSP) entra neutra. Os spawns aparecem como esferas.
+passarela no ar, um teto que a planta escondia; *3D + texturas* aplica os **pixels reais** nas
+faces: primeiro os embutidos no BSP, depois os dos **WADs** que o mapa declara (ele abre os `.wad`
+da pasta do mod e resolve pelo nome). O **céu** também vem de verdade: os 6 lados de `gfx/env`
+pelo `skyname` do worldspawn. Quando nada disso existe, entra uma cor neutra no lugar da textura.
 
 **Metadados.** Título do worldspawn, céu, WADs declarados, dimensões do mapa, contagem de faces,
 vértices e brush entities, texturas usadas e quantas estão embutidas no BSP.
@@ -83,12 +84,14 @@ num pedido de correção ao mapper.
 src-tauri/src/
   bsp/reader.rs     cursor little-endian com limites checados (nada de panic em arquivo torto)
   bsp/mod.rs        header + lumps: vértices, arestas, surfedges, faces, texinfo (vecs), texturas; e a decodificação de pixels (mip0 + paleta -> PNG)
-  bsp/entities.rs   parser do lump de texto + resumo (spawns, WADs, modo pelas entidades)
+  bsp/entities.rs   parser do lump de texto + resumo (spawns, WADs, skyname, modo pelas entidades)
+  bsp/wad.rs        abre os `.wad` declarados pelo mapa e resolve o pixel de textura por nome
+  bsp/sky.rs        decodifica os 6 lados do céu (TGA/BMP de gfx/env) e monta a caixa do skybox
   bsp/render.rs     planta baixa em SVG                    ← puro, sem I/O
   catalog.rs        varredura, diagnóstico, montagem do detalhe e da malha 3D (triângulos + UV)
   main.rs           comandos Tauri, cache e settings
 src/                frontend (Vite + TS puro)
-  viewer3d.ts       cena Three.js: orbit, cor por altura ou textura real
+  viewer3d.ts       cena Three.js: orbit, cor por altura ou textura real, skybox
 ```
 
 Duas decisões que valem explicação:
@@ -130,7 +133,8 @@ panic), e cada regra do diagnóstico.
 ## Limitações
 
 - Só GoldSrc v30. BSP2/Source (`de_dust2` do CS:S) não abre — e diz isso em vez de fingir.
-- A vista 3D mostra a geometria e as texturas **embutidas** no BSP; textura de WAD externo entra
-  com cor neutra porque o pixel está no `.wad`, não no mapa.
+- A vista 3D mostra as texturas embutidas no BSP **e** as dos WADs, mas precisa que os `.wad`
+  estejam na pasta do mod (mesma de onde o mapa foi aberto) e que o `skyname` exista em
+  `gfx/env`. Sem isso, entra cor neutra / domo de reserva.
 - Não renderiza modelos (`.mdl`) nem sprites; brush entities aparecem, props não.
-- Não valida WAD de verdade (não abre o arquivo `.wad`), só compara o que o BSP declara.
+- Não valida WAD de verdade (não abre o arquivo `.wad` quando não declarado).

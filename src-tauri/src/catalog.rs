@@ -1,5 +1,6 @@
 use crate::bsp::entities::{self, EntitySummary, GameMode};
 use crate::bsp::render::{self, RenderOptions};
+use crate::bsp::wad;
 use crate::bsp::{Bsp, Lump, LUMP_ENTITIES, LUMP_LIGHTING, LUMP_MODELS, LUMP_NAMES, LUMP_TEXTURES};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -419,6 +420,17 @@ pub struct MeshTexture {
     pub png: Option<String>,
 }
 
+/// Os 6 lados do céu (formato `gfx/env` do GoldSrc/CS 1.6).
+#[derive(Debug, Clone, Serialize)]
+pub struct SkyBox {
+    pub up: String,
+    pub down: String,
+    pub left: String,
+    pub right: String,
+    pub front: String,
+    pub back: String,
+}
+
 /// Malha 3D pronta para o WebGL: triângulos não indexados em um array plano.
 #[derive(Debug, Clone, Serialize)]
 pub struct MeshDetail {
@@ -432,27 +444,41 @@ pub struct MeshDetail {
     pub textures: Vec<MeshTexture>,
     pub spawns: Vec<entities::SpawnPoint>,
     pub bounds: Option<Bounds>,
+    /// céu do mapa (6 lados decodificados), quando o `gfx/env` existe.
+    pub skybox: Option<SkyBox>,
+    /// quantas texturas vieram de WAD (não das embutidas no BSP)
+    pub wad_textures: usize,
     pub triangles: usize,
     pub skipped: usize,
 }
 
-/// Decode de uma textura com cache: retorna `(slot, largura, altura)`, ou `None`
-/// quando o index cru aponta para textura de WAD (sem pixels no BSP).
+/// Decode de uma textura com cache: primeiro os pixels embutidos no BSP,
+/// depois — nome em mãos — a textura do WAD externo. Retorna `(slot, w, h)` ou
+/// `None` quando não há imagem nenhuma (a face fica com cor neutra).
 fn texture_slot(
     cache: &mut HashMap<usize, Option<(usize, f32, f32)>>,
     textures: &mut Vec<MeshTexture>,
     bytes: &[u8],
     lump: Lump,
     raw: usize,
+    raw_name: &str,
+    wads: &mut wad::WadSet,
 ) -> Option<(usize, f32, f32)> {
     if let Some(known) = cache.get(&raw) {
         return *known;
     }
-    let resolved = crate::bsp::texture_image(bytes, lump, raw).map(|img| {
+    let mut resolved = crate::bsp::texture_image(bytes, lump, raw).map(|img| {
         let slot = textures.len();
         textures.push(MeshTexture { name: img.name, png: Some(img.png) });
         (slot, img.width as f32, img.height as f32)
     });
+    if resolved.is_none() && !raw_name.is_empty() {
+        if let Some((png, w, h)) = wads.resolve(raw_name) {
+            let slot = textures.len();
+            textures.push(MeshTexture { name: raw_name.to_string(), png: Some(png) });
+            resolved = Some((slot, w as f32, h as f32));
+        }
+    }
     cache.insert(raw, resolved);
     resolved
 }
@@ -464,23 +490,43 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
     let bsp = Bsp::parse(&bytes).map_err(|e| e.to_string())?;
     let ents = entities::summarize(&entities::parse(&bsp.entities_raw));
     let tex_lump = bsp.lumps[LUMP_TEXTURES];
+    let mut wads = wad::WadSet::for_map(path, &ents.wads);
+    let skybox = crate::bsp::sky::load_sky(path, ents.sky.as_deref().unwrap_or("")).and_then(|s| {
+        if let (Some(up), Some(down), Some(left), Some(right), Some(front), Some(back)) =
+            (&s[0], &s[1], &s[2], &s[3], &s[4], &s[5])
+        {
+            Some(SkyBox {
+                up: up.clone(),
+                down: down.clone(),
+                left: left.clone(),
+                right: right.clone(),
+                front: front.clone(),
+                back: back.clone(),
+            })
+        } else {
+            None
+        }
+    });
 
-    let empty = |spawns| MeshDetail {
+    let empty = |spawns, skybox| MeshDetail {
         positions: Vec::new(),
         uvs: Vec::new(),
         texindex: Vec::new(),
         textures: Vec::new(),
         spawns,
         bounds: None,
+        skybox,
+        wad_textures: 0,
         triangles: 0,
         skipped: 0,
     };
     let Some(bounds) = bsp.bounds() else {
-        return Ok(empty(ents.spawns));
+        return Ok(empty(ents.spawns, skybox));
     };
 
     let mut cache: HashMap<usize, Option<(usize, f32, f32)>> = HashMap::new();
     let mut textures: Vec<MeshTexture> = Vec::new();
+    let mut wad_textures = 0usize;
     let mut positions = Vec::new();
     let mut uvs = Vec::new();
     let mut texindex = Vec::new();
@@ -505,8 +551,14 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
 
         let texinfo_ix = face.texinfo as usize;
         let miptex = bsp.texinfo_miptex.get(texinfo_ix).copied();
-        let slot = miptex
-            .and_then(|m| texture_slot(&mut cache, &mut textures, &bytes, tex_lump, m as usize));
+        let raw_name = miptex
+            .and_then(|m| bsp.raw_texture_name.get(m as usize))
+            .map(String::as_str)
+            .unwrap_or("");
+        let mut slot = None;
+        if let Some(m) = miptex {
+            slot = texture_slot(&mut cache, &mut textures, &bytes, tex_lump, m as usize, raw_name, &mut wads);
+        }
         // Índice de textura para o frontend, com sentinela para "sem imagem".
         let index = slot.map(|(s, _, _)| s as u32).unwrap_or(u32::MAX);
         // Eixos de textura: transformam cada vértice do mundo em UV.
@@ -537,6 +589,19 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
         }
     }
 
+    // Conta quantas texturas vieram de WAD (não embutidas no BSP).
+    let mut embedded_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for t in &bsp.textures {
+        if t.embedded {
+            embedded_names.insert(t.name.to_ascii_lowercase());
+        }
+    }
+    for t in &textures {
+        if !embedded_names.contains(&t.name.to_ascii_lowercase()) {
+            wad_textures += 1;
+        }
+    }
+
     Ok(MeshDetail {
         positions,
         uvs,
@@ -544,6 +609,8 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
         textures,
         spawns: ents.spawns,
         bounds: bounds_of(Some(bounds)),
+        skybox,
+        wad_textures,
         triangles,
         skipped,
     })

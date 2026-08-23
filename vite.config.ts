@@ -6,6 +6,11 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    watch: {
+      // O cargo grava o binário em src-tauri/target enquanto o Vite observa a
+      // árvore; nos Windows um .exe bloqueado derruba o watcher (EBUSY).
+      ignored: ["**/src-tauri/**"],
+    },
   },
   build: {
     target: "esnext",
