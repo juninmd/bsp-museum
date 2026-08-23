@@ -194,9 +194,12 @@ pub fn summarize(entities: &[Entity]) -> EntitySummary {
 
     // O que as entidades dizem, independente do nome do arquivo. A divergência
     // entre isto e o prefixo é exatamente o bug que faz "o round nunca acabar".
+    // Reféns sem zona ainda são modo de resgate: o GoldSrc, sem `hostage_rescue`
+    // explícito, resgata perto de qualquer spawn CT (TWHL) — então a presença de
+    // `hostage_entity` já basta para o modo ser Hostage.
     let mode_by_entities = if bomb_targets > 0 {
         GameMode::Bomb
-    } else if hostages > 0 && rescue_zones > 0 {
+    } else if hostages > 0 {
         GameMode::Hostage
     } else if vip_starts > 0 && vip_safety > 0 {
         GameMode::Assassination

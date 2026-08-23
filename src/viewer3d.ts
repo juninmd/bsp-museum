@@ -4,6 +4,10 @@ import type { MeshDetail, SkyBox } from "./types.ts";
 
 export interface Viewer3D {
   setTextured(on: boolean): void;
+  setTransparent(on: boolean): void;
+  enterFirstPerson(): void;
+  exitFirstPerson(): void;
+  setFullscreen(on: boolean): void;
   dispose(): void;
 }
 
@@ -186,6 +190,108 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
   const sky = loadSky(center, maxDim, mesh.skybox);
   scene.add(sky);
 
+  // -------------------------------------------------------------------------
+  // Estado do modo "primeira pessoa" (no-clip): mouse para olhar, WASD/fly.
+  let mode: "orbit" | "fps" = "orbit";
+  let yaw = 0;
+  let pitch = 0;
+  const fpKeys = new Set<string>();
+
+  const sens = 0.0022;
+  const clampPitch = (v: number) => Math.max(-1.55, Math.min(1.55, v));
+
+  function onPointerLockChange() {
+    const locked = document.pointerLockElement === renderer.domElement;
+    if (!locked && mode === "fps") {
+      mode = "orbit";
+      controls.enabled = true;
+      controls.target.set(center[0], center[1], center[2]);
+      controls.update();
+    }
+  }
+
+  function onMouseMove(e: MouseEvent) {
+    if (mode !== "fps" || document.pointerLockElement !== renderer.domElement) return;
+    yaw -= e.movementX * sens;
+    pitch = clampPitch(pitch - e.movementY * sens);
+  }
+
+  function onKeyDown(e: KeyboardEvent) {
+    if (mode !== "fps") return;
+    fpKeys.add(e.code);
+  }
+  function onKeyUp(e: KeyboardEvent) {
+    fpKeys.delete(e.code);
+  }
+
+  document.addEventListener("pointerlockchange", onPointerLockChange);
+  document.addEventListener("mousemove", onMouseMove);
+  document.addEventListener("keydown", onKeyDown);
+  document.addEventListener("keyup", onKeyUp);
+
+  const clock = new THREE.Clock();
+  const tmpFwd = new THREE.Vector3();
+  const tmpRight = new THREE.Vector3();
+  const tmpMove = new THREE.Vector3();
+
+  function stepFps(dt: number) {
+    const speed = 340;
+    const fast = fpKeys.has("ShiftLeft") || fpKeys.has("ShiftRight");
+    const v = speed * (fast ? 3.2 : 1) * dt;
+    // Direção de visão (sem rolagem de câmera).
+    tmpFwd.set(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
+    tmpRight.set(Math.cos(yaw), 0, -Math.sin(yaw));
+
+    tmpMove.set(0, 0, 0);
+    if (fpKeys.has("KeyW")) tmpMove.add(tmpFwd);
+    if (fpKeys.has("KeyS")) tmpMove.sub(tmpFwd);
+    if (fpKeys.has("KeyD")) tmpMove.add(tmpRight);
+    if (fpKeys.has("KeyA")) tmpMove.sub(tmpRight);
+    if (tmpMove.lengthSq() > 0) tmpMove.normalize().multiplyScalar(v);
+    if (fpKeys.has("Space")) tmpMove.y += v;
+    if (fpKeys.has("ControlLeft") || fpKeys.has("ControlRight") || fpKeys.has("KeyC")) tmpMove.y -= v;
+
+    camera.position.add(tmpMove);
+    if (camera.position.y < 1) camera.position.y = 1;
+    camera.rotation.order = "YXZ";
+    camera.rotation.set(pitch, yaw, 0);
+  }
+
+  function enterFirstPerson() {
+    if (mode === "fps") return;
+    mode = "fps";
+    controls.enabled = false;
+    // Inicia em um ponto de spawn (ou no centro) sem colisão — no-clip.
+    const spawn = mesh.spawns[0];
+    const start: [number, number, number] = spawn
+      ? toWorld(spawn.position[0]!, spawn.position[1]!, spawn.position[2]!)
+      : [center[0], center[1], center[2]];
+    camera.position.set(start[0], start[1], start[2]);
+    camera.rotation.order = "YXZ";
+    camera.lookAt(center[0], center[1], center[2]);
+    yaw = camera.rotation.y;
+    pitch = camera.rotation.x;
+    renderer.domElement.requestPointerLock();
+  }
+
+  function exitFirstPerson() {
+    if (mode !== "fps") return;
+    mode = "orbit";
+    fpKeys.clear();
+    if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+    controls.enabled = true;
+    controls.target.set(center[0], center[1], center[2]);
+    controls.update();
+  }
+
+  function setFullscreen(on: boolean) {
+    if (on) {
+      container.requestFullscreen?.();
+    } else if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+    }
+  }
+
   function spawnRadius(m: MeshDetail): number {
     const s: [number, number, number] = m.bounds ? m.bounds.size : [256, 256, 128];
     return Math.max(2, Math.min(s[0], s[1], s[2]) / 40);
@@ -205,7 +311,12 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
   let raf = 0;
   const animate = () => {
     raf = requestAnimationFrame(animate);
-    controls.update();
+    const dt = Math.min(clock.getDelta(), 0.1);
+    if (mode === "fps") {
+      stepFps(dt);
+    } else {
+      controls.update();
+    }
     renderer.render(scene, camera);
   };
   animate();
@@ -218,11 +329,36 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
   };
   applyMode(textured);
 
+  const applyTransparent = (on: boolean) => {
+    for (const e of entries) {
+      const mat = e.texMaterial;
+      if (on) {
+        mat.transparent = true;
+        mat.depthWrite = false;
+        mat.alphaTest = 0;
+      } else {
+        mat.transparent = false;
+        mat.depthWrite = true;
+        mat.alphaTest = 0;
+      }
+      mat.needsUpdate = true;
+    }
+  };
+
   return {
     setTextured: applyMode,
+    setTransparent: applyTransparent,
+    enterFirstPerson,
+    exitFirstPerson,
+    setFullscreen,
     dispose() {
       cancelAnimationFrame(raf);
       ro.disconnect();
+      document.removeEventListener("pointerlockchange", onPointerLockChange);
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keyup", onKeyUp);
+      if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
       controls.dispose();
       for (const e of entries) {
         scene.remove(e.mesh);

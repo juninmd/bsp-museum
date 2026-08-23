@@ -463,9 +463,11 @@ fn entidades_definem_o_modo_independente_do_nome() {
 }
 
 #[test]
-fn refem_sem_zona_nao_conta_como_modo_de_resgate() {
+fn refem_so_com_hostage_ja_e_modo_de_resgate() {
+    // Sem zona explícita o GoldSrc resgata perto de spawn CT: logo basta ter
+    // hostage_entity para o modo ser Hostage (não deixa virar deathmatch).
     let summary = entities::summarize(&entities::parse("{\"classname\" \"hostage_entity\"}"));
-    assert_ne!(summary.mode_by_entities, GameMode::Hostage);
+    assert_eq!(summary.mode_by_entities, GameMode::Hostage);
 }
 
 // ---------------------------------------------------------------- render
@@ -685,11 +687,14 @@ fn cs_sem_refem_e_critico() {
 }
 
 #[test]
-fn refem_sem_zona_de_resgate_e_critico() {
+fn refem_sem_zona_de_resgate_e_info_com_fallback() {
     let mut text = spawns_text(16, 16);
     text.push_str("{\"classname\" \"hostage_entity\"}");
     let findings = findings_for("cs_semzona.bsp", &text, 512);
-    assert!(has(&findings, "cs-sem-resgate"));
+    let finding = findings.iter().find(|f| f.id == "cs-sem-resgate").expect("achado");
+    // Sem zona explícita o motor resgata perto de spawn CT: é info, não erro.
+    assert_eq!(finding.severity, catalog::Severity::Info);
+    assert!(finding.hint.contains("fallback"));
 }
 
 #[test]
@@ -1102,7 +1107,393 @@ fn dump_sky() {
 }
 
 #[test]
+#[ignore = "precisa de uma pasta de mapas de verdade"]
+fn gera_prints_mapa() {
+    let Ok(dir) = std::env::var("BSP_MUSEUM_MAPS") else {
+        eprintln!("defina BSP_MUSEUM_MAPS");
+        return;
+    };
+    let Ok(out) = std::env::var("BSP_MUSEUM_OUT") else {
+        eprintln!("defina BSP_MUSEUM_OUT");
+        return;
+    };
+    let _ = std::fs::create_dir_all(&out);
+    let path = std::path::Path::new(&dir).join("de_dust2.bsp");
+    let mesh = catalog::mesh(&path).expect("malha do de_dust2");
+
+    // Planta: polígonos do SVG (já ordenados por desenho = painter's algorithm).
+    let svg = render::top_down(
+        &Bsp::parse(&std::fs::read(&path).unwrap()).unwrap(),
+        &mesh.spawns,
+        RenderOptions::detail(),
+    )
+    .svg;
+    let plant = svg_to_png(&svg, 1280);
+    let _ = std::fs::write(
+        std::path::Path::new(&out).join("dust2-planta.png"),
+        plant,
+    );
+
+    // 3D: isométrico por altura, com z-buffer, a partir da malha (vetor do app).
+    let tri = mesh_triangles(&mesh);
+    let png = render_isometric(&tri, &mesh, 1280);
+    let _ = std::fs::write(std::path::Path::new(&out).join("dust2-3d.png"), png);
+
+    println!("prints em: {}", out);
+}
+
+/// Converte o SVG da planta em PNG (rasterizeira de <polygon>).
+fn svg_to_png(svg: &str, target_w: i32) -> Vec<u8> {
+    let mut view = [0f32; 4];
+    if let Some(vb) = attr(svg, "viewBox") {
+        let p: Vec<f32> = vb.split_whitespace().map(|v| v.parse().unwrap_or(0.0)).collect();
+        if p.len() == 4 {
+            view = [p[0], p[1], p[2], p[3]];
+        }
+    }
+    let vw = (view[2] - view[0]).max(1.0);
+    let vh = (view[3] - view[1]).max(1.0);
+    let scale = target_w as f32 / vw;
+    let w = target_w as u32;
+    let h = (vh * scale).round().max(1.0) as u32;
+
+    let mut img = vec![0u8; (w * h * 4) as usize];
+    for px in img.chunks_exact_mut(4) {
+        px.copy_from_slice(&[13, 17, 23, 255]);
+    }
+
+    let mut zbuf = vec![f32::MAX; (w * h) as usize];
+    let mut idx: i32 = 0;
+    let mut cursor = svg;
+    while let Some(start) = cursor.find("<polygon") {
+        let after = &cursor[start..];
+        let Some(pts) = attr(after, "points") else {
+            cursor = &after[8..];
+            continue;
+        };
+        let fill = attr(after, "fill")
+            .and_then(|hx| u32::from_str_radix(hx.trim_start_matches('#'), 16).ok())
+            .unwrap_or(0x8b98a5);
+        let coords: Vec<(f32, f32)> = pts
+            .split_whitespace()
+            .filter_map(|pair| {
+                let mut it = pair.split(',');
+                Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+            })
+            .collect();
+        if coords.len() < 3 {
+            cursor = &after[8..];
+            continue;
+        }
+        // draw order = profundidade (painter's): o último do SVG fica por cima.
+        // Por isso o mais recente precisa vencer o z-buffer => profundidade negativa.
+        let depth = -(idx as f32);
+        // projeta para a tela (y do SVG cresce para baixo).
+        let s: Vec<(f32, f32)> = coords
+            .iter()
+            .map(|(x, y)| ((x - view[0]) * scale, (y - view[1]) * scale))
+            .collect();
+        let r = ((fill >> 16) & 0xff) as u8;
+        let g = ((fill >> 8) & 0xff) as u8;
+        let b = (fill & 0xff) as u8;
+        // Triangula o polígono (fan a partir do 1º vértice) e preenche cada triângulo.
+        for i in 1..s.len() - 1 {
+            fill_tri(
+                &mut img,
+                &mut zbuf,
+                w,
+                h,
+                &[s[0], s[i], s[i + 1]],
+                &[depth, depth, depth],
+                [r, g, b, 255],
+            );
+        }
+        idx += 1;
+        cursor = &after[7..];
+    }
+
+    // Paredes (traço fino) e spawns (bolinha) — como na vista detalhada do app.
+    let mut c2 = svg;
+    while let Some(start) = c2.find("<polyline") {
+        let after = &c2[start..];
+        let Some(pts) = attr(after, "points") else {
+            c2 = &after[9..];
+            continue;
+        };
+        let coords: Vec<(f32, f32)> = pts
+            .split_whitespace()
+            .filter_map(|pair| {
+                let mut it = pair.split(',');
+                Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+            })
+            .collect();
+        for i in 0..coords.len().saturating_sub(1) {
+            let (x0, y0) = coords[i];
+            let (x1, y1) = coords[i + 1];
+            line_on(
+                &mut img,
+                w,
+                h,
+                (x0 - view[0]) * scale,
+                (y0 - view[1]) * scale,
+                (x1 - view[0]) * scale,
+                (y1 - view[1]) * scale,
+            );
+        }
+        c2 = &after[9..];
+    }
+    let mut c3 = svg;
+    while let Some(start) = c3.find("<circle") {
+        let after = &c3[start..];
+        let cx = attr(after, "cx").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        let cy = attr(after, "cy").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        let r = attr(after, "r").and_then(|v| v.parse().ok()).unwrap_or(1.0);
+        let fill = attr(after, "fill").unwrap_or_default();
+        let crgb = hex_or(&fill, 0x4c7cf3);
+        disc_on(
+            &mut img,
+            w,
+            h,
+            (cx - view[0]) * scale,
+            (cy - view[1]) * scale,
+            r * scale,
+            crgb,
+        );
+        c3 = &after[7..];
+    }
+    crate::bsp::rgba_png(w as usize, h as usize, &img)
+        .map(|url| base64_decode(url.strip_prefix("data:image/png;base64,").unwrap_or(&url)))
+        .unwrap_or_default()
+}
+
+fn hex_or(s: &str, d: u32) -> u32 {
+    let hx: String = s.trim_start_matches('#').chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+    u32::from_str_radix(&hx, 16).unwrap_or(d)
+}
+
+/// Desenha uma linha na tela (espessura de ~1.4 px).
+fn line_on(img: &mut [u8], w: u32, h: u32, x0: f32, y0: f32, x1: f32, y1: f32) {
+    let steps = (x1 - x0).abs().max((y1 - y0).abs()).max(1.0) as i32;
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let x = (x0 + (x1 - x0) * t).round() as i32;
+        let y = (y0 + (y1 - y0) * t).round() as i32;
+        if x >= 0 && x < w as i32 && y >= 0 && y < h as i32 {
+            let di = (y as usize * w as usize + x as usize) * 4;
+            img[di] = 139;
+            img[di + 1] = 152;
+            img[di + 2] = 165;
+            img[di + 3] = 255;
+        }
+    }
+}
+
+/// Desenha um disco (spawn) preenchido.
+fn disc_on(img: &mut [u8], w: u32, h: u32, cx: f32, cy: f32, r: f32, color: u32) {
+    if r <= 0.0 {
+        return;
+    }
+    let rr = (r as i32).max(1);
+    for dy in -rr..=rr {
+        for dx in -rr..=rr {
+            if (dx as f32) * (dx as f32) + (dy as f32) * (dy as f32) > r * r {
+                continue;
+            }
+            let x = (cx as i32) + dx;
+            let y = (cy as i32) + dy;
+            if x >= 0 && x < w as i32 && y >= 0 && y < h as i32 {
+                let di = (y as usize * w as usize + x as usize) * 4;
+                img[di] = ((color >> 16) & 0xff) as u8;
+                img[di + 1] = ((color >> 8) & 0xff) as u8;
+                img[di + 2] = (color & 0xff) as u8;
+                img[di + 3] = 255;
+            }
+        }
+    }
+}
+
+/// Triângulos da malha: [(vértice 3D goldsrc), [screen-ish]] — aqui mantemos 3D.
+fn mesh_triangles(mesh: &crate::catalog::MeshDetail) -> Vec<([[f32; 3]; 3], usize)> {
+    let mut out = Vec::with_capacity(mesh.triangles);
+    for tri in 0..mesh.triangles {
+        let p = tri * 9;
+        let a = [mesh.positions[p], mesh.positions[p + 1], mesh.positions[p + 2]];
+        let b = [mesh.positions[p + 3], mesh.positions[p + 4], mesh.positions[p + 5]];
+        let c = [mesh.positions[p + 6], mesh.positions[p + 7], mesh.positions[p + 8]];
+        out.push(([a, b, c], tri));
+    }
+    out
+}
+
+/// Renderiza isométrico por altura com z-buffer; devolve bytes de PNG.
+fn render_isometric(
+    tris: &[([[f32; 3]; 3], usize)],
+    mesh: &crate::catalog::MeshDetail,
+    target_w: i32,
+) -> Vec<u8> {
+    let b = mesh.bounds.as_ref().expect("bounds");
+    let yaw = -0.75f32; // ~ -43°
+    let pitch = 0.5f32; // ~ 29°
+    let cp = pitch.cos();
+    let fwd = [yaw.sin() * cp, pitch.sin(), -yaw.cos() * cp];
+    let upv = [0.0f32, 1.0, 0.0];
+    let right = norm(cross(fwd, upv));
+    let up2 = norm(cross(right, fwd));
+
+    let center = [
+        (b.mins[0] + b.maxs[0]) / 2.0,
+        (b.mins[1] + b.maxs[1]) / 2.0,
+        (b.mins[2] + b.maxs[2]) / 2.0,
+    ];
+    // goldsrc Z-up -> Three Y-up: (x, z, -y)
+    let to_world = |p: [f32; 3]| [p[0], p[2], -p[1]];
+    let proj = |w: [f32; 3]| -> [f32; 3] {
+        let d = [w[0] - center[0], w[1] - center[1], w[2] - center[2]];
+        [dot(d, right), dot(d, up2), dot(d, fwd)]
+    };
+    let projected: Vec<([[f32; 3]; 3], [f32; 3])> = tris
+        .iter()
+        .map(|([a, b, c], _)| {
+            let (wa, wb, wc) = (to_world(*a), to_world(*b), to_world(*c));
+            ([proj(wa), proj(wb), proj(wc)], [a[2], b[2], c[2]])
+        })
+        .collect();
+
+    let mut minx = f32::MAX;
+    let mut maxx = f32::MIN;
+    let mut miny = f32::MAX;
+    let mut maxy = f32::MIN;
+    for (t, _) in &projected {
+        for v in t {
+            minx = minx.min(v[0]);
+            maxx = maxx.max(v[0]);
+            miny = miny.min(v[1]);
+            maxy = maxy.max(v[1]);
+        }
+    }
+    let vw = (maxx - minx).max(1.0);
+    let vh = (maxy - miny).max(1.0);
+    let scale = target_w as f32 / vw;
+    let wpx = target_w as u32;
+    let hpx = (vh * scale).round().max(1.0) as u32;
+
+    let mut img = vec![0u8; (wpx * hpx * 4) as usize];
+    for px in img.chunks_exact_mut(4) {
+        px.copy_from_slice(&[13, 17, 23, 255]);
+    }
+    let mut zbuf = vec![f32::MAX; (wpx * hpx) as usize];
+
+    let zmin = b.mins[2];
+    let zmax = b.maxs[2].max(zmin + 1.0);
+    let map_to = |p: [f32; 3]| ((p[0] - minx) * scale, (p[1] - miny) * scale);
+
+    for (t, gold) in &projected {
+        let s: Vec<(f32, f32)> = t.iter().map(|v| map_to(*v)).collect();
+        // cor pela altura goldsrc do triângulo
+        let c = height_rgb_3(((gold[0] + gold[1] + gold[2]) / 3.0 - zmin) / (zmax - zmin));
+        fill_tri(
+            &mut img,
+            &mut zbuf,
+            wpx,
+            hpx,
+            &s,
+            &[t[0][2], t[1][2], t[2][2]],
+            [c[0], c[1], c[2], 255],
+        );
+    }
+    crate::bsp::rgba_png(wpx as usize, hpx as usize, &img)
+        .map(|url| base64_decode(url.strip_prefix("data:image/png;base64,").unwrap_or(&url)))
+        .unwrap_or_default()
+}
+
+/// Altura -> cor (mesma paleta da planta).
+fn height_rgb_3(t: f32) -> [u8; 3] {
+    let low = [26u8, 42, 71];
+    let mid = [31u8, 122, 140];
+    let high = [242u8, 193, 78];
+    let lerp = |a: [u8; 3], b: [u8; 3], k: f32| -> [u8; 3] {
+        [
+            (a[0] as f32 + (b[0] as f32 - a[0] as f32) * k) as u8,
+            (a[1] as f32 + (b[1] as f32 - a[1] as f32) * k) as u8,
+            (a[2] as f32 + (b[2] as f32 - a[2] as f32) * k) as u8,
+        ]
+    };
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 { lerp(low, mid, t * 2.0) } else { lerp(mid, high, (t - 0.5) * 2.0) }
+}
+
+/// Extrai valores de um `key="..."` na string via procura simples.
+fn attr(s: &str, key: &str) -> Option<String> {
+    let pat = format!("{key}=\"");
+    let start = s.find(&pat)? + pat.len();
+    let rest = &s[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+fn norm(a: [f32; 3]) -> [f32; 3] {
+    let l = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+    if l > f32::EPSILON { [a[0] / l, a[1] / l, a[2] / l] } else { a }
+}
+
+/// Rasteriza um triângulo com z-buffer em `img` (RGBA) e `zbuf`.
+#[allow(clippy::too_many_arguments)]
+fn fill_tri(
+    img: &mut [u8],
+    zbuf: &mut [f32],
+    w: u32,
+    h: u32,
+    pts: &[(f32, f32)],
+    z: &[f32; 3],
+    rgba: [u8; 4],
+) {
+    let (x0, y0) = (pts[0].0, pts[0].1);
+    let (x1, y1) = (pts[1].0, pts[1].1);
+    let (x2, y2) = (pts[2].0, pts[2].1);
+    let minx = x0.min(x1).min(x2).max(0.0).floor() as i32;
+    let maxx = x0.max(x1).max(x2).min((w - 1) as f32).ceil() as i32;
+    let miny = y0.min(y1).min(y2).max(0.0).floor() as i32;
+    let maxy = y0.max(y1).max(y2).min((h - 1) as f32).ceil() as i32;
+    let area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+    if area.abs() < f32::EPSILON {
+        return;
+    }
+    for py in miny..=maxy {
+        for px in minx..=maxx {
+            let fx = px as f32;
+            let fy = py as f32;
+            let w0 = ((x1 - fx) * (y2 - fy) - (x2 - fx) * (y1 - fy)) / area;
+            let w1 = ((x2 - fx) * (y0 - fy) - (x0 - fx) * (y2 - fy)) / area;
+            let w2 = 1.0 - w0 - w1;
+            if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
+                let depth = w0 * z[0] + w1 * z[1] + w2 * z[2];
+                let idx = (py as usize) * w as usize + px as usize;
+                if depth < zbuf[idx] {
+                    zbuf[idx] = depth;
+                    let di = idx * 4;
+                    img[di] = rgba[0];
+                    img[di + 1] = rgba[1];
+                    img[di + 2] = rgba[2];
+                    img[di + 3] = rgba[3];
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn detalhe_de_arquivo_invalido_devolve_erro_legivel() {
+
     let path = write_temp("ruim.bsp", b"lixo");
     let err = catalog::detail(&path, RenderOptions::detail(), 32).unwrap_err();
     assert!(err.contains("pequeno") || err.contains("versão"), "veio: {err}");

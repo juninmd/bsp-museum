@@ -19,6 +19,8 @@ let settings: Settings = { last_dir: null, slots: 32 };
 
 /** Cache da malha 3D por caminho: pedir só na primeira vez que abrir a aba 3D. */
 const meshCache = new Map<string, MeshDetail>();
+/** cleanup dos listeners do documento registrados ao abrir o detalhe */
+let detailCleanup: (() => void) | null = null;
 let activeViewer: Viewer3D | null = null;
 
 type ViewMode = "plan" | "3d" | "tex";
@@ -203,15 +205,62 @@ function renderDetail(d: MapDetail) {
 
   const planHolder = drawerBody.querySelector<HTMLElement>("#plan-holder")!;
   const viewerHolder = drawerBody.querySelector<HTMLElement>("#viewer3d")!;
+  const controlsBar = drawerBody.querySelector<HTMLElement>("#viewer-controls")!;
+  const alphaBox = drawerBody.querySelector<HTMLInputElement>("#tex-alpha")!;
+  const fpsBtn = drawerBody.querySelector<HTMLButtonElement>("#fps")!;
+  const fsBtn = drawerBody.querySelector<HTMLButtonElement>("#fullscreen")!;
+  const cameraLabel = drawerBody.querySelector<HTMLElement>("#camera-label")!;
   const buttons = Array.from(drawerBody.querySelectorAll<HTMLButtonElement>("[data-view]"));
+
+  const showControls = (mode: ViewMode) => {
+    const is3D = mode === "3d" || mode === "tex";
+    controlsBar.hidden = !is3D;
+    if (is3D) cameraLabel.textContent = "arraste para girar · scroll para zoom";
+  };
+
+  alphaBox.addEventListener("change", () => activeViewer?.setTransparent(alphaBox.checked));
+  fpsBtn.addEventListener("click", () => {
+    if (!activeViewer) return;
+    if (fpsBtn.dataset.on === "1") {
+      activeViewer.exitFirstPerson();
+      fpsBtn.dataset.on = "0";
+      fpsBtn.textContent = "primeira pessoa";
+      cameraLabel.textContent = "arraste para girar · scroll para zoom";
+    } else {
+      activeViewer.enterFirstPerson();
+      fpsBtn.dataset.on = "1";
+      fpsBtn.textContent = "sair (Esc)";
+      cameraLabel.textContent = "WASD mover · mouse olhar · Space/Ctrl sobe/desce";
+    }
+  });
+  const resetFpsBtn = () => {
+    fpsBtn.dataset.on = "0";
+    fpsBtn.textContent = "primeira pessoa";
+    cameraLabel.textContent = "arraste para girar · scroll para zoom";
+  };
+  const onPointerLock = () => {
+    if (!document.pointerLockElement) resetFpsBtn();
+  };
+  document.addEventListener("pointerlockchange", onPointerLock);
+  fsBtn.addEventListener("click", () => activeViewer?.setFullscreen(!document.fullscreenElement));
+  const onFsChange = () => {
+    fsBtn.textContent = document.fullscreenElement ? "sair da tela cheia" : "tela cheia";
+  };
+  document.addEventListener("fullscreenchange", onFsChange);
 
   const setMode = async (mode: ViewMode) => {
     activeViewer?.dispose();
     activeViewer = null;
+    document.removeEventListener("pointerlockchange", onPointerLock);
     planHolder.hidden = mode !== "plan";
     viewerHolder.hidden = mode === "plan";
     for (const b of buttons) b.classList.toggle("active", b.dataset.view === mode);
-    if (mode === "plan") return;
+    showControls(mode);
+    if (mode === "plan") {
+      alphaBox.checked = false;
+      resetFpsBtn();
+      return;
+    }
 
     let mesh = meshCache.get(d.summary.path);
     if (mesh === undefined) {
@@ -229,6 +278,10 @@ function renderDetail(d: MapDetail) {
   };
 
   for (const b of buttons) b.addEventListener("click", () => setMode(b.dataset.view as ViewMode));
+  detailCleanup = () => {
+    document.removeEventListener("pointerlockchange", onPointerLock);
+    document.removeEventListener("fullscreenchange", onFsChange);
+  };
 }
 
 function detailHtml(d: MapDetail): string {
@@ -282,6 +335,12 @@ function detailHtml(d: MapDetail): string {
         <button data-view="tex">3D + texturas</button>
       </div>
       <span class="dim">${d.polygons} polígonos desenhados</span>
+    </div>
+    <div class="viewer-controls" id="viewer-controls" hidden>
+      <label class="chk"><input type="checkbox" id="tex-alpha" /> texturas transparentes</label>
+      <button id="fps" class="ghost2">primeira pessoa</button>
+      <button id="fullscreen" class="ghost2">tela cheia</button>
+      <code id="camera-label" class="hintc">arraste para girar · scroll para zoom</code>
     </div>
     <div class="plan" id="plan-holder">${d.svg}</div>
     <div class="viewer3d" id="viewer3d" hidden></div>
@@ -337,6 +396,8 @@ function detailHtml(d: MapDetail): string {
 }
 
 function closeDrawer() {
+  detailCleanup?.();
+  detailCleanup = null;
   activeViewer?.dispose();
   activeViewer = null;
   drawer.hidden = true;

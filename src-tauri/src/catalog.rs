@@ -246,12 +246,19 @@ pub fn findings(summary: &MapSummary, ents: &EntitySummary, bsp: &Bsp, slots: us
             "Mapa de resgate sem refém nenhum.".into(),
             "Sem hostage_entity o objetivo não existe. Adicione os reféns e a func_hostage_rescue correspondente.",
         ),
+        GameMode::Hostage if ents.rescue_zones == 0 && ents.ct_spawns == 0 => push(
+            "cs-sem-resgate",
+            Severity::Warn,
+            "Reféns sem zona de resgate e sem spawn CT".into(),
+            format!("{} refém(ns), nenhuma zona de resgate e nenhum spawn de CT.", ents.hostages),
+            "O GoldSrc resgata refém perto de qualquer info_player_start — sem spawn de CT o resgate não tem para onde convergir.",
+        ),
         GameMode::Hostage if ents.rescue_zones == 0 => push(
             "cs-sem-resgate",
-            Severity::Critical,
-            "Reféns sem zona de resgate".into(),
-            format!("{} refém(ns), nenhuma func_hostage_rescue.", ents.hostages),
-            "Os CTs não têm onde entregar. Sem a zona, o round não fecha por objetivo.",
+            Severity::Info,
+            "Reféns sem zona de resgate explícita".into(),
+            format!("{} refém(ns), nenhuma func_/info_hostage_rescue.", ents.hostages),
+            "Não é erro: sem zona, o motor resgata o refém quando ele fica a menos de 256u de qualquer spawn de CT (fallback oficial do GoldSrc).",
         ),
         GameMode::Assassination if ents.vip_starts == 0 || ents.vip_safety == 0 => push(
             "as-incompleto",

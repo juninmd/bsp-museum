@@ -51,6 +51,21 @@ faces: primeiro os embutidos no BSP, depois os dos **WADs** que o mapa declara (
 da pasta do mod e resolve pelo nome). O **céu** também vem de verdade: os 6 lados de `gfx/env`
 pelo `skyname` do worldspawn. Quando nada disso existe, entra uma cor neutra no lugar da textura.
 
+Na vista 3D dá para: **tela cheia**, marcar **texturas transparentes** (respeita o alpha do mip), e ir
+para **primeira pessoa (no-clip)** — você navega o mapa como no jogo: WASD anda, mouse olha,
+Space/Ctrl sobe/desce, Shift corre, Esc sai. A vista é orbitável (arraste gire, scroll zoom).
+Nos mapas `cs_` sem zona de resgate explícita (`func_/info_hostage_rescue`) o aviso é só informativo:
+o GoldSrc resgata o refém perto de qualquer spawn de CT (fallback oficial).
+
+### `de_dust2` no bsp-museum
+
+Planta baixa (chão + paredes + spawns) e vista 3D (cor por altura) do mapa clássico,
+geradas pelo próprio app a partir do `.bsp`:
+
+| | |
+|---|---|
+| ![planta baixa do de_dust2](prints/dust2-planta.png) | ![vista 3D do de_dust2](prints/dust2-3d.png) |
+
 **Metadados.** Título do worldspawn, céu, WADs declarados, dimensões do mapa, contagem de faces,
 vértices e brush entities, texturas usadas e quantas estão embutidas no BSP.
 
@@ -62,7 +77,7 @@ por causa do lightmap, não da geometria.
 | id | severidade | pega |
 |---|---|---|
 | `de-sem-bomb-target` | crítico | prefixo `de_` sem alvo de bomba — o round nunca termina por objetivo |
-| `cs-sem-refem` / `cs-sem-resgate` | crítico | `cs_` sem refém, ou refém sem `func_hostage_rescue` |
+| `cs-sem-refem` / `cs-sem-resgate` | crítico / info | `cs_` sem refém (crítico); refém sem `func_hostage_rescue` é só info — o GoldSrc resgata perto de any spawn CT |
 | `as-incompleto` | crítico | `as_` sem `info_vip_start` ou sem `func_vip_safetyzone` |
 | `prefixo-divergente` | aviso | as entidades montam um modo que o nome do arquivo não ativa |
 | `sem-spawn` | crítico | nenhum `info_player_start`/`info_player_deathmatch` |
