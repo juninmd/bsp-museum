@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>bsp-museum</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="mark"></span>
+        <h1>bsp-museum</h1>
+      </div>
+      <div class="controls">
+        <input id="search" type="search" placeholder="filtrar por nome, título ou modo…" autocomplete="off" />
+        <select id="mode-filter" title="modo de jogo">
+          <option value="">todos os modos</option>
+        </select>
+        <select id="sort" title="ordenação">
+          <option value="name">nome</option>
+          <option value="size">tamanho do arquivo</option>
+          <option value="spawns">spawns</option>
+          <option value="area">área do mapa</option>
+          <option value="problems">problemas primeiro</option>
+        </select>
+        <label class="slots" title="slots do servidor — quantos jogadores o mapa precisa aguentar">
+          <span>slots</span>
+          <input id="slots" type="number" min="2" max="128" step="1" value="32" />
+        </label>
+        <button id="pick">escolher pasta…</button>
+      </div>
+    </header>
+
+    <div id="status" class="status"></div>
+
+    <main id="gallery" class="gallery" aria-live="polite"></main>
+
+    <aside id="drawer" class="drawer" hidden>
+      <button id="close-drawer" class="close" aria-label="fechar">×</button>
+      <div id="drawer-body"></div>
+    </aside>
+    <div id="scrim" class="scrim" hidden></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

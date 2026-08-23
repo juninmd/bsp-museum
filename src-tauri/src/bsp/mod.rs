@@ -1,0 +1,310 @@
+pub mod entities;
+pub mod reader;
+pub mod render;
+
+use reader::{BspError, Cursor, Result};
+use serde::Serialize;
+
+/// BSP do GoldSrc (Half-Life, Counter-Strike 1.6).
+pub const GOLDSRC_VERSION: i32 = 30;
+pub const LUMP_COUNT: usize = 15;
+const HEADER_SIZE: usize = 4 + LUMP_COUNT * 8;
+
+pub const LUMP_ENTITIES: usize = 0;
+pub const LUMP_PLANES: usize = 1;
+pub const LUMP_TEXTURES: usize = 2;
+pub const LUMP_VERTEXES: usize = 3;
+pub const LUMP_VISIBILITY: usize = 4;
+pub const LUMP_NODES: usize = 5;
+pub const LUMP_TEXINFO: usize = 6;
+pub const LUMP_FACES: usize = 7;
+pub const LUMP_LIGHTING: usize = 8;
+pub const LUMP_CLIPNODES: usize = 9;
+pub const LUMP_LEAVES: usize = 10;
+pub const LUMP_MARKSURFACES: usize = 11;
+pub const LUMP_EDGES: usize = 12;
+pub const LUMP_SURFEDGES: usize = 13;
+pub const LUMP_MODELS: usize = 14;
+
+pub const LUMP_NAMES: [&str; LUMP_COUNT] = [
+    "entities",
+    "planes",
+    "textures",
+    "vertexes",
+    "visibility",
+    "nodes",
+    "texinfo",
+    "faces",
+    "lighting",
+    "clipnodes",
+    "leaves",
+    "marksurfaces",
+    "edges",
+    "surfedges",
+    "models",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Lump {
+    pub offset: usize,
+    pub length: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Face {
+    pub first_edge: i32,
+    pub num_edges: u16,
+    pub texinfo: u16,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Texture {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    /// textura embutida no BSP (não depende de WAD externo)
+    pub embedded: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Model {
+    pub mins: [f32; 3],
+    pub maxs: [f32; 3],
+    pub origin: [f32; 3],
+    pub first_face: i32,
+    pub num_faces: i32,
+}
+
+/// Geometria e metadados de um BSP, já validados.
+#[derive(Debug, Clone)]
+pub struct Bsp {
+    pub version: i32,
+    pub lumps: [Lump; LUMP_COUNT],
+    pub entities_raw: String,
+    pub vertices: Vec<[f32; 3]>,
+    pub edges: Vec<(u16, u16)>,
+    pub surfedges: Vec<i32>,
+    pub faces: Vec<Face>,
+    pub texinfo_miptex: Vec<u32>,
+    pub textures: Vec<Texture>,
+    pub models: Vec<Model>,
+}
+
+fn lump_slice<'a>(data: &'a [u8], lump: Lump, name: &'static str) -> Result<&'a [u8]> {
+    let end = lump.offset.checked_add(lump.length).ok_or(BspError::LumpOutOfBounds {
+        lump: name,
+        offset: lump.offset,
+        len: lump.length,
+        file: data.len(),
+    })?;
+    data.get(lump.offset..end).ok_or(BspError::LumpOutOfBounds {
+        lump: name,
+        offset: lump.offset,
+        len: lump.length,
+        file: data.len(),
+    })
+}
+
+fn check_stride(lump: Lump, name: &'static str, stride: usize) -> Result<usize> {
+    if lump.length % stride != 0 {
+        return Err(BspError::LumpMisaligned { lump: name, len: lump.length, stride });
+    }
+    Ok(lump.length / stride)
+}
+
+impl Bsp {
+    /// Lê só o cabeçalho: barato o bastante para varrer centenas de mapas.
+    pub fn header(data: &[u8]) -> Result<(i32, [Lump; LUMP_COUNT])> {
+        if data.len() < HEADER_SIZE {
+            return Err(BspError::TooSmall { need: HEADER_SIZE, have: data.len() });
+        }
+        let mut cur = Cursor::new(data);
+        let version = cur.i32()?;
+        if version != GOLDSRC_VERSION {
+            return Err(BspError::BadVersion(version));
+        }
+        let mut lumps = [Lump { offset: 0, length: 0 }; LUMP_COUNT];
+        for lump in lumps.iter_mut() {
+            let offset = cur.i32()?;
+            let length = cur.i32()?;
+            if offset < 0 || length < 0 {
+                return Err(BspError::LumpOutOfBounds {
+                    lump: "header",
+                    offset: offset.unsigned_abs() as usize,
+                    len: length.unsigned_abs() as usize,
+                    file: data.len(),
+                });
+            }
+            *lump = Lump { offset: offset as usize, length: length as usize };
+        }
+        Ok((version, lumps))
+    }
+
+    /// Só o lump de entidades e o modelo 0 — o suficiente para o catálogo.
+    pub fn parse_light(data: &[u8]) -> Result<(String, Option<Model>, [Lump; LUMP_COUNT])> {
+        let (_, lumps) = Self::header(data)?;
+        let entities_raw = read_entities(data, lumps[LUMP_ENTITIES])?;
+        let models = read_models(data, lumps[LUMP_MODELS])?;
+        Ok((entities_raw, models.first().copied(), lumps))
+    }
+
+    pub fn parse(data: &[u8]) -> Result<Bsp> {
+        let (version, lumps) = Self::header(data)?;
+
+        let entities_raw = read_entities(data, lumps[LUMP_ENTITIES])?;
+
+        let vtx = lumps[LUMP_VERTEXES];
+        let count = check_stride(vtx, "vertexes", 12)?;
+        let mut cur = Cursor::new(lump_slice(data, vtx, "vertexes")?);
+        let mut vertices = Vec::with_capacity(count);
+        for _ in 0..count {
+            vertices.push(cur.vec3()?);
+        }
+
+        let edg = lumps[LUMP_EDGES];
+        let count = check_stride(edg, "edges", 4)?;
+        let mut cur = Cursor::new(lump_slice(data, edg, "edges")?);
+        let mut edges = Vec::with_capacity(count);
+        for _ in 0..count {
+            edges.push((cur.u16()?, cur.u16()?));
+        }
+
+        let sfe = lumps[LUMP_SURFEDGES];
+        let count = check_stride(sfe, "surfedges", 4)?;
+        let mut cur = Cursor::new(lump_slice(data, sfe, "surfedges")?);
+        let mut surfedges = Vec::with_capacity(count);
+        for _ in 0..count {
+            surfedges.push(cur.i32()?);
+        }
+
+        let fac = lumps[LUMP_FACES];
+        let count = check_stride(fac, "faces", 20)?;
+        let mut cur = Cursor::new(lump_slice(data, fac, "faces")?);
+        let mut faces = Vec::with_capacity(count);
+        for _ in 0..count {
+            cur.skip(2)?; // planenum
+            cur.skip(2)?; // side
+            let first_edge = cur.i32()?;
+            let num_edges = cur.u16()?;
+            let texinfo = cur.u16()?;
+            cur.skip(4)?; // styles[4]
+            cur.skip(4)?; // lightofs
+            faces.push(Face { first_edge, num_edges, texinfo });
+        }
+
+        let tin = lumps[LUMP_TEXINFO];
+        let count = check_stride(tin, "texinfo", 40)?;
+        let mut cur = Cursor::new(lump_slice(data, tin, "texinfo")?);
+        let mut texinfo_miptex = Vec::with_capacity(count);
+        for _ in 0..count {
+            cur.skip(32)?; // vecs[2][4]
+            texinfo_miptex.push(cur.u32()?);
+            cur.skip(4)?; // flags
+        }
+
+        let textures = read_textures(data, lumps[LUMP_TEXTURES])?;
+        let models = read_models(data, lumps[LUMP_MODELS])?;
+
+        Ok(Bsp {
+            version,
+            lumps,
+            entities_raw,
+            vertices,
+            edges,
+            surfedges,
+            faces,
+            texinfo_miptex,
+            textures,
+            models,
+        })
+    }
+
+    /// Vértices de uma face, seguindo surfedges (negativo = aresta invertida).
+    pub fn face_polygon(&self, face: &Face) -> Option<Vec<[f32; 3]>> {
+        let n = face.num_edges as usize;
+        if n < 3 {
+            return None;
+        }
+        let start = usize::try_from(face.first_edge).ok()?;
+        let mut points = Vec::with_capacity(n);
+        for i in 0..n {
+            let se = *self.surfedges.get(start + i)?;
+            let (a, b) = *self.edges.get(se.unsigned_abs() as usize)?;
+            let vi = if se >= 0 { a } else { b };
+            points.push(*self.vertices.get(vi as usize)?);
+        }
+        Some(points)
+    }
+
+    pub fn texture_of(&self, face: &Face) -> Option<&Texture> {
+        let miptex = *self.texinfo_miptex.get(face.texinfo as usize)? as usize;
+        self.textures.get(miptex)
+    }
+
+    pub fn bounds(&self) -> Option<Model> {
+        self.models.first().copied()
+    }
+}
+
+fn read_entities(data: &[u8], lump: Lump) -> Result<String> {
+    let raw = lump_slice(data, lump, "entities")?;
+    let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+    Ok(String::from_utf8_lossy(&raw[..end]).into_owned())
+}
+
+fn read_models(data: &[u8], lump: Lump) -> Result<Vec<Model>> {
+    let count = check_stride(lump, "models", 64)?;
+    let mut cur = Cursor::new(lump_slice(data, lump, "models")?);
+    let mut models = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mins = cur.vec3()?;
+        let maxs = cur.vec3()?;
+        let origin = cur.vec3()?;
+        cur.skip(16)?; // headnode[4]
+        cur.skip(4)?; // visleafs
+        let first_face = cur.i32()?;
+        let num_faces = cur.i32()?;
+        models.push(Model { mins, maxs, origin, first_face, num_faces });
+    }
+    Ok(models)
+}
+
+/// Lump de texturas: tabela de offsets + miptex. Offset -1 marca entrada ausente.
+fn read_textures(data: &[u8], lump: Lump) -> Result<Vec<Texture>> {
+    if lump.length == 0 {
+        return Ok(Vec::new());
+    }
+    let raw = lump_slice(data, lump, "textures")?;
+    let mut cur = Cursor::new(raw);
+    let count = cur.u32()? as usize;
+    // Cada entrada é um i32; a tabela precisa caber no lump.
+    if 4 + count * 4 > raw.len() {
+        return Err(BspError::LumpOutOfBounds {
+            lump: "textures",
+            offset: lump.offset,
+            len: 4 + count * 4,
+            file: raw.len(),
+        });
+    }
+    let mut offsets = Vec::with_capacity(count);
+    for _ in 0..count {
+        offsets.push(cur.i32()?);
+    }
+
+    let mut textures = Vec::with_capacity(count);
+    for offset in offsets {
+        if offset < 0 {
+            continue;
+        }
+        let at = offset as usize;
+        let Some(entry) = raw.get(at..) else { continue };
+        let mut mip = Cursor::new(entry);
+        let Ok(name) = mip.fixed_str(16) else { continue };
+        let Ok(width) = mip.u32() else { continue };
+        let Ok(height) = mip.u32() else { continue };
+        let Ok(first_offset) = mip.u32() else { continue };
+        // offset de pixel 0 = textura vem de WAD externo; != 0 = embutida no BSP.
+        textures.push(Texture { name, width, height, embedded: first_offset != 0 });
+    }
+    Ok(textures)
+}
