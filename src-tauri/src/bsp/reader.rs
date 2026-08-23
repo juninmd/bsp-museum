@@ -94,6 +94,10 @@ impl<'a> Cursor<'a> {
         Ok([self.f32()?, self.f32()?, self.f32()?])
     }
 
+    pub fn vec4(&mut self) -> Result<[f32; 4]> {
+        Ok([self.f32()?, self.f32()?, self.f32()?, self.f32()?])
+    }
+
     pub fn skip(&mut self, n: usize) -> Result<()> {
         self.take(n).map(|_| ())
     }

@@ -66,3 +66,28 @@ export interface Settings {
   last_dir: string | null;
   slots: number;
 }
+
+export interface SpawnPoint {
+  team: string;
+  position: [number, number, number];
+}
+
+export interface MeshTexture {
+  name: string;
+  /** `data:image/png;base64,...`; null = textura de WAD sem pixels */
+  png: string | null;
+}
+
+export interface MeshDetail {
+  /** xyz por vértice, 9 floats por triângulo */
+  positions: number[];
+  /** uv por vértice, 6 floats por triângulo */
+  uvs: number[];
+  /** índice de textura por triângulo; u32::MAX = sem imagem */
+  texindex: number[];
+  textures: MeshTexture[];
+  spawns: SpawnPoint[];
+  bounds: Bounds | null;
+  triangles: number;
+  skipped: number;
+}

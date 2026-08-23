@@ -17,7 +17,7 @@ const INVISIBLE: [&str; 9] = [
     "trigger",
 ];
 
-fn is_invisible(name: &str) -> bool {
+pub fn is_invisible(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     INVISIBLE.contains(&lower.as_str())
 }

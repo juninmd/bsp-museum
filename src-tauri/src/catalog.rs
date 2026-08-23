@@ -1,7 +1,8 @@
 use crate::bsp::entities::{self, EntitySummary, GameMode};
 use crate::bsp::render::{self, RenderOptions};
-use crate::bsp::{Bsp, Lump, LUMP_ENTITIES, LUMP_LIGHTING, LUMP_MODELS, LUMP_NAMES};
+use crate::bsp::{Bsp, Lump, LUMP_ENTITIES, LUMP_LIGHTING, LUMP_MODELS, LUMP_NAMES, LUMP_TEXTURES};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -408,4 +409,142 @@ pub fn thumbnail(path: &Path) -> Result<String, String> {
     let parsed = entities::parse(&bsp.entities_raw);
     let ents = entities::summarize(&parsed);
     Ok(render::top_down(&bsp, &ents.spawns, RenderOptions::thumbnail()).svg)
+}
+
+/// Textura embutida no BSP, decodificada para o frontend.
+#[derive(Debug, Clone, Serialize)]
+pub struct MeshTexture {
+    pub name: String,
+    /// `data:image/png;base64,...` ou `None` para textura que vem de WAD externo.
+    pub png: Option<String>,
+}
+
+/// Malha 3D pronta para o WebGL: triângulos não indexados em um array plano.
+#[derive(Debug, Clone, Serialize)]
+pub struct MeshDetail {
+    /// xyz por vértice, 9 floats por triângulo.
+    pub positions: Vec<f32>,
+    /// uv por vértice, 6 floats por triângulo.
+    pub uvs: Vec<f32>,
+    /// índice de textura por triângulo; `u32::MAX` = sem imagem (só cor).
+    pub texindex: Vec<u32>,
+    /// texturas na ordem referenciada por `texindex`.
+    pub textures: Vec<MeshTexture>,
+    pub spawns: Vec<entities::SpawnPoint>,
+    pub bounds: Option<Bounds>,
+    pub triangles: usize,
+    pub skipped: usize,
+}
+
+/// Decode de uma textura com cache: retorna `(slot, largura, altura)`, ou `None`
+/// quando o index cru aponta para textura de WAD (sem pixels no BSP).
+fn texture_slot(
+    cache: &mut HashMap<usize, Option<(usize, f32, f32)>>,
+    textures: &mut Vec<MeshTexture>,
+    bytes: &[u8],
+    lump: Lump,
+    raw: usize,
+) -> Option<(usize, f32, f32)> {
+    if let Some(known) = cache.get(&raw) {
+        return *known;
+    }
+    let resolved = crate::bsp::texture_image(bytes, lump, raw).map(|img| {
+        let slot = textures.len();
+        textures.push(MeshTexture { name: img.name, png: Some(img.png) });
+        (slot, img.width as f32, img.height as f32)
+    });
+    cache.insert(raw, resolved);
+    resolved
+}
+
+/// Malha 3D do mapa. Diferente da planta, inclui tetos e paredes: é para ver o
+/// estado do mapa andando por dentro dele.
+pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("não leu o arquivo: {e}"))?;
+    let bsp = Bsp::parse(&bytes).map_err(|e| e.to_string())?;
+    let ents = entities::summarize(&entities::parse(&bsp.entities_raw));
+    let tex_lump = bsp.lumps[LUMP_TEXTURES];
+
+    let empty = |spawns| MeshDetail {
+        positions: Vec::new(),
+        uvs: Vec::new(),
+        texindex: Vec::new(),
+        textures: Vec::new(),
+        spawns,
+        bounds: None,
+        triangles: 0,
+        skipped: 0,
+    };
+    let Some(bounds) = bsp.bounds() else {
+        return Ok(empty(ents.spawns));
+    };
+
+    let mut cache: HashMap<usize, Option<(usize, f32, f32)>> = HashMap::new();
+    let mut textures: Vec<MeshTexture> = Vec::new();
+    let mut positions = Vec::new();
+    let mut uvs = Vec::new();
+    let mut texindex = Vec::new();
+    let mut triangles = 0usize;
+    let mut skipped = 0usize;
+
+    for face in &bsp.faces {
+        if let Some(tex) = bsp.texture_of(face) {
+            if render::is_invisible(&tex.name) {
+                skipped += 1;
+                continue;
+            }
+        }
+        let Some(points) = bsp.face_polygon(face) else {
+            skipped += 1;
+            continue;
+        };
+        if points.len() < 3 {
+            skipped += 1;
+            continue;
+        }
+
+        let texinfo_ix = face.texinfo as usize;
+        let miptex = bsp.texinfo_miptex.get(texinfo_ix).copied();
+        let slot = miptex
+            .and_then(|m| texture_slot(&mut cache, &mut textures, &bytes, tex_lump, m as usize));
+        // Índice de textura para o frontend, com sentinela para "sem imagem".
+        let index = slot.map(|(s, _, _)| s as u32).unwrap_or(u32::MAX);
+        // Eixos de textura: transformam cada vértice do mundo em UV.
+        let vecs = bsp.texinfo_vecs.get(texinfo_ix).copied();
+
+        let mut face_uv: Vec<[f32; 2]> = vec![[0.0, 0.0]; points.len()];
+        if let Some(v) = vecs {
+            let (w, h) = slot.map(|(_, w, h)| (w, h)).unwrap_or((1.0, 1.0));
+            for (i, p) in points.iter().enumerate() {
+                let s = v[0][0] * p[0] + v[0][1] * p[1] + v[0][2] * p[2] + v[0][3];
+                let t = v[1][0] * p[0] + v[1][1] * p[1] + v[1][2] * p[2] + v[1][3];
+                face_uv[i] = [s / w, t / h];
+            }
+        }
+
+        // Fan triangulation: faces de brush do GoldSrc são convexas.
+        for i in 1..points.len() - 1 {
+            let a = points[0];
+            let b = points[i];
+            let c = points[i + 1];
+            positions.extend_from_slice(&[a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]]);
+            let ua = face_uv[0];
+            let ub = face_uv[i];
+            let uc = face_uv[i + 1];
+            uvs.extend_from_slice(&[ua[0], ua[1], ub[0], ub[1], uc[0], uc[1]]);
+            texindex.push(index);
+            triangles += 1;
+        }
+    }
+
+    Ok(MeshDetail {
+        positions,
+        uvs,
+        texindex,
+        textures,
+        spawns: ents.spawns,
+        bounds: bounds_of(Some(bounds)),
+        triangles,
+        skipped,
+    })
 }

@@ -44,6 +44,12 @@ com a **cor vindo da altura** (frio embaixo, quente em cima) — então uma pass
 cima da rua em vez de se perder na silhueta. Na vista detalhada, as paredes entram como traço
 fino e os spawns como bolinhas (azul CT, laranja T).
 
+**Vista 3D.** Cada mapa tem um viewport **WebGL** orbitável (arraste para girar, scroll para zoom).
+Dois modos: *3D* mostra a geometria colorida por altura — você enxerga um *biowall* por cima, uma
+passarela no ar, um teto que a planta escondia; *3D + texturas* aplica os **pixels embutidos no
+BSP** diretamente nas faces, então o mapa aparece com a textura real que o mapper pôs nele.
+Textura que vem de WAD externo (sem pixels no BSP) entra neutra. Os spawns aparecem como esferas.
+
 **Metadados.** Título do worldspawn, céu, WADs declarados, dimensões do mapa, contagem de faces,
 vértices e brush entities, texturas usadas e quantas estão embutidas no BSP.
 
@@ -76,12 +82,13 @@ num pedido de correção ao mapper.
 ```
 src-tauri/src/
   bsp/reader.rs     cursor little-endian com limites checados (nada de panic em arquivo torto)
-  bsp/mod.rs        header + lumps: vértices, arestas, surfedges, faces, texinfo, texturas, modelos
+  bsp/mod.rs        header + lumps: vértices, arestas, surfedges, faces, texinfo (vecs), texturas; e a decodificação de pixels (mip0 + paleta -> PNG)
   bsp/entities.rs   parser do lump de texto + resumo (spawns, WADs, modo pelas entidades)
   bsp/render.rs     planta baixa em SVG                    ← puro, sem I/O
-  catalog.rs        varredura, diagnóstico e montagem do detalhe
+  catalog.rs        varredura, diagnóstico, montagem do detalhe e da malha 3D (triângulos + UV)
   main.rs           comandos Tauri, cache e settings
-src/                frontend (Vite + TS puro, sem framework)
+src/                frontend (Vite + TS puro)
+  viewer3d.ts       cena Three.js: orbit, cor por altura ou textura real
 ```
 
 Duas decisões que valem explicação:
@@ -123,6 +130,7 @@ panic), e cada regra do diagnóstico.
 ## Limitações
 
 - Só GoldSrc v30. BSP2/Source (`de_dust2` do CS:S) não abre — e diz isso em vez de fingir.
-- A planta é geométrica, não texturizada: mostra a forma do mapa, não o visual dele.
+- A vista 3D mostra a geometria e as texturas **embutidas** no BSP; textura de WAD externo entra
+  com cor neutra porque o pixel está no `.wad`, não no mapa.
 - Não renderiza modelos (`.mdl`) nem sprites; brush entities aparecem, props não.
 - Não valida WAD de verdade (não abre o arquivo `.wad`), só compara o que o BSP declara.

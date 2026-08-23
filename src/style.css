@@ -361,6 +361,60 @@ button:hover {
   display: block;
 }
 
+.plan-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin: 0.9rem 0 0.4rem;
+}
+
+.plan-toolbar .dim {
+  color: var(--dim);
+  font-size: 0.72rem;
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.seg button {
+  border: none;
+  border-radius: 0;
+  background: var(--panel);
+  color: var(--dim);
+  padding: 0.35rem 0.8rem;
+  font-size: 0.8rem;
+}
+
+.seg button + button {
+  border-left: 1px solid var(--line);
+}
+
+.seg button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.viewer3d {
+  height: 460px;
+  margin: 0 0 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0a0e14;
+  position: relative;
+}
+
+.viewer3d canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .legend {
   display: flex;
   align-items: center;

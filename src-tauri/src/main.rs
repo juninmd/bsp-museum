@@ -94,6 +94,11 @@ fn map_detail(path: String, slots: usize) -> Result<MapDetail, String> {
 }
 
 #[tauri::command]
+fn map_mesh(path: String) -> Result<catalog::MeshDetail, String> {
+    catalog::mesh(&PathBuf::from(path))
+}
+
+#[tauri::command]
 fn export_svg(target: String, svg: String) -> Result<(), String> {
     std::fs::write(&target, svg).map_err(|e| format!("não gravou {target}: {e}"))
 }
@@ -149,6 +154,7 @@ fn main() {
             scan_maps,
             map_thumbnail,
             map_detail,
+            map_mesh,
             export_svg,
             load_settings,
             save_settings,

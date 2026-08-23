@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { Finding, MapDetail, MapSummary, Settings } from "./types.ts";
+import type { Finding, MapDetail, MapSummary, MeshDetail, Settings } from "./types.ts";
+import { mount3D, type Viewer3D } from "./viewer3d.ts";
 
 const gallery = document.querySelector<HTMLElement>("#gallery")!;
 const statusBar = document.querySelector<HTMLElement>("#status")!;
@@ -15,6 +16,12 @@ const scrim = document.querySelector<HTMLElement>("#scrim")!;
 
 let maps: MapSummary[] = [];
 let settings: Settings = { last_dir: null, slots: 32 };
+
+/** Cache da malha 3D por caminho: pedir só na primeira vez que abrir a aba 3D. */
+const meshCache = new Map<string, MeshDetail>();
+let activeViewer: Viewer3D | null = null;
+
+type ViewMode = "plan" | "3d" | "tex";
 
 const fmtSize = (bytes: number) =>
   bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
@@ -176,19 +183,52 @@ async function openDetail(map: MapSummary) {
       path: map.path,
       slots: settings.slots,
     });
-    drawerBody.innerHTML = detailHtml(detail);
-    drawerBody.querySelector<HTMLButtonElement>("#export")?.addEventListener("click", async () => {
-      const target = await save({
-        defaultPath: `${detail.summary.name}.svg`,
-        filters: [{ name: "SVG", extensions: ["svg"] }],
-      });
-      if (!target) return;
-      await invoke("export_svg", { target, svg: detail.svg });
-      setStatus(`planta exportada para ${target}`);
-    });
+    renderDetail(detail);
   } catch (err) {
     drawerBody.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
   }
+}
+
+function renderDetail(d: MapDetail) {
+  drawerBody.innerHTML = detailHtml(d);
+  drawerBody.querySelector<HTMLButtonElement>("#export")?.addEventListener("click", async () => {
+    const target = await save({
+      defaultPath: `${d.summary.name}.svg`,
+      filters: [{ name: "SVG", extensions: ["svg"] }],
+    });
+    if (!target) return;
+    await invoke("export_svg", { target, svg: d.svg });
+    setStatus(`planta exportada para ${target}`);
+  });
+
+  const planHolder = drawerBody.querySelector<HTMLElement>("#plan-holder")!;
+  const viewerHolder = drawerBody.querySelector<HTMLElement>("#viewer3d")!;
+  const buttons = Array.from(drawerBody.querySelectorAll<HTMLButtonElement>("[data-view]"));
+
+  const setMode = async (mode: ViewMode) => {
+    activeViewer?.dispose();
+    activeViewer = null;
+    planHolder.hidden = mode !== "plan";
+    viewerHolder.hidden = mode === "plan";
+    for (const b of buttons) b.classList.toggle("active", b.dataset.view === mode);
+    if (mode === "plan") return;
+
+    let mesh = meshCache.get(d.summary.path);
+    if (mesh === undefined) {
+      viewerHolder.innerHTML = `<div class="loading">montando cena 3D…</div>`;
+      try {
+        mesh = await invoke<MeshDetail>("map_mesh", { path: d.summary.path });
+        meshCache.set(d.summary.path, mesh);
+      } catch (err) {
+        viewerHolder.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
+        return;
+      }
+    }
+    viewerHolder.replaceChildren();
+    activeViewer = mount3D(viewerHolder, mesh, mode === "tex");
+  };
+
+  for (const b of buttons) b.addEventListener("click", () => setMode(b.dataset.view as ViewMode));
 }
 
 function detailHtml(d: MapDetail): string {
@@ -235,12 +275,21 @@ function detailHtml(d: MapDetail): string {
     </header>
     ${s.title ? `<p class="title">“${escapeHtml(s.title)}”</p>` : ""}
 
-    <div class="plan">${d.svg}</div>
+    <div class="plan-toolbar">
+      <div class="seg" role="tablist">
+        <button data-view="plan" class="active">Planta</button>
+        <button data-view="3d">3D</button>
+        <button data-view="tex">3D + texturas</button>
+      </div>
+      <span class="dim">${d.polygons} polígonos desenhados</span>
+    </div>
+    <div class="plan" id="plan-holder">${d.svg}</div>
+    <div class="viewer3d" id="viewer3d" hidden></div>
     <p class="legend">
       <span class="key ct"></span> spawn CT
       <span class="key t"></span> spawn T
       <span class="key grad"></span> altura (baixo → alto)
-      <span class="dim">${d.polygons} polígonos desenhados</span>
+      <span class="dim">arraste para girar · scroll para zoom</span>
     </p>
 
     <section>
@@ -288,6 +337,8 @@ function detailHtml(d: MapDetail): string {
 }
 
 function closeDrawer() {
+  activeViewer?.dispose();
+  activeViewer = null;
   drawer.hidden = true;
   scrim.hidden = true;
   drawerBody.replaceChildren();

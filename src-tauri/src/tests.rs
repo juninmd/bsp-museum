@@ -844,6 +844,129 @@ fn acervo_real() {
 }
 
 #[test]
+#[ignore = "precisa de uma pasta de mapas de verdade"]
+fn malha_acervo() {
+    let Ok(dir) = std::env::var("BSP_MUSEUM_MAPS") else {
+        eprintln!("defina BSP_MUSEUM_MAPS");
+        return;
+    };
+    let root = std::path::PathBuf::from(dir);
+    let files = catalog::find_bsp_files(&root);
+    assert!(!files.is_empty(), "nenhum .bsp em {}", root.display());
+
+    let mut com_pixels = 0usize;
+    let mut malhas = 0usize;
+    let mut vazias = 0usize;
+    let mut falhas = Vec::new();
+    let mut total_tris = 0usize;
+    let mut pior_payload = 0usize;
+    let mut pior_nome = String::new();
+    let started = std::time::Instant::now();
+
+    for file in &files {
+        match catalog::mesh(file) {
+            Ok(mesh) => {
+                if mesh.triangles == 0 {
+                    vazias += 1;
+                    continue;
+                }
+                malhas += 1;
+                total_tris += mesh.triangles;
+                assert_eq!(
+                    mesh.positions.len() % 9,
+                    0,
+                    "{}: posições não são triângulos",
+                    file.display()
+                );
+                assert_eq!(
+                    mesh.uvs.len() % 6,
+                    0,
+                    "{}: uvs não são triângulos",
+                    file.display()
+                );
+                assert_eq!(mesh.texindex.len(), mesh.triangles);
+                let payload: usize = mesh.textures.iter().map(|t| t.png.as_ref().map(|p| p.len()).unwrap_or(0)).sum();
+                if payload > pior_payload {
+                    pior_payload = payload;
+                    pior_nome = file.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                }
+                com_pixels += mesh.textures.iter().filter(|t| t.png.is_some()).count();
+            }
+            Err(err) => falhas.push(format!("{}: {err}", file.display())),
+        }
+    }
+
+    let ms = started.elapsed().as_millis();
+    println!(
+        "malha: {malhas} geradas, {} triângulos, {vazias} vazias, {com_pixels} texturas com pixels, pior payload {:.1} MB ({pior_nome}), em {ms} ms",
+        total_tris,
+        pior_payload as f64 / (1024.0 * 1024.0)
+    );
+    for f in &falhas {
+        println!("  ! {f}");
+    }
+
+    // O que não pode é o parser quebrar em massa: 90% das malhas precisam existir.
+    assert!(
+        malhas * 10 >= files.len() * 9,
+        "menos de 90% dos mapas geraram malha ({malhas} de {})",
+        files.len()
+    );
+}
+
+#[test]
+#[ignore = "precisa de uma pasta de mapas de verdade"]
+fn dump_textures() {
+    let Ok(dir) = std::env::var("BSP_MUSEUM_MAPS") else {
+        eprintln!("defina BSP_MUSEUM_MAPS");
+        return;
+    };
+    let Ok(out) = std::env::var("BSP_MUSEUM_OUT") else {
+        eprintln!("defina BSP_MUSEUM_OUT");
+        return;
+    };
+    let _ = std::fs::create_dir_all(&out);
+    let root = std::path::PathBuf::from(dir);
+    let files = catalog::find_bsp_files(&root);
+    let mut dumped = 0usize;
+    for file in files.iter().take(40) {
+        if let Ok(mesh) = catalog::mesh(file) {
+            for (i, tex) in mesh.textures.iter().enumerate() {
+                if let Some(data_url) = &tex.png {
+                    if data_url.len() < 64 {
+                        continue;
+                    }
+                    let b64 = data_url.strip_prefix("data:image/png;base64,").unwrap_or(data_url);
+                    let bytes = base64_decode(b64);
+                    let name = format!(
+                        "{}__{:02}__{}.png",
+                        file.file_stem().unwrap_or_default().to_string_lossy(),
+                        i,
+                        sanitize(&tex.name)
+                    );
+                    let _ = std::fs::write(std::path::Path::new(&out).join(&name), bytes);
+                    dumped += 1;
+                    if dumped >= 6 {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn base64_decode(s: &str) -> Vec<u8> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(s.trim())
+        .unwrap_or_default()
+}
+
+fn sanitize(s: &str) -> String {
+    s.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect()
+}
+
+#[test]
 fn detalhe_de_arquivo_invalido_devolve_erro_legivel() {
     let path = write_temp("ruim.bsp", b"lixo");
     let err = catalog::detail(&path, RenderOptions::detail(), 32).unwrap_err();

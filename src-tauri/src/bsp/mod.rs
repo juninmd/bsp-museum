@@ -2,6 +2,7 @@ pub mod entities;
 pub mod reader;
 pub mod render;
 
+use base64::Engine as _;
 use reader::{BspError, Cursor, Result};
 use serde::Serialize;
 
@@ -86,6 +87,9 @@ pub struct Bsp {
     pub surfedges: Vec<i32>,
     pub faces: Vec<Face>,
     pub texinfo_miptex: Vec<u32>,
+    /// eixos de textura (vecs[2][4]) de cada texinfo — é o que mapeia um
+    /// vértice do mundo em coordenada UV da textura.
+    pub texinfo_vecs: Vec<[[f32; 4]; 2]>,
     pub textures: Vec<Texture>,
     pub models: Vec<Model>,
 }
@@ -196,8 +200,11 @@ impl Bsp {
         let count = check_stride(tin, "texinfo", 40)?;
         let mut cur = Cursor::new(lump_slice(data, tin, "texinfo")?);
         let mut texinfo_miptex = Vec::with_capacity(count);
+        let mut texinfo_vecs = Vec::with_capacity(count);
         for _ in 0..count {
-            cur.skip(32)?; // vecs[2][4]
+            let s_axis = cur.vec4()?;
+            let t_axis = cur.vec4()?;
+            texinfo_vecs.push([s_axis, t_axis]);
             texinfo_miptex.push(cur.u32()?);
             cur.skip(4)?; // flags
         }
@@ -214,6 +221,7 @@ impl Bsp {
             surfedges,
             faces,
             texinfo_miptex,
+            texinfo_vecs,
             textures,
             models,
         })
@@ -307,4 +315,136 @@ fn read_textures(data: &[u8], lump: Lump) -> Result<Vec<Texture>> {
         textures.push(Texture { name, width, height, embedded: first_offset != 0 });
     }
     Ok(textures)
+}
+
+/// Imagem de uma textura, decodificada e comprimida, pronta para o WebView.
+#[derive(Debug, Clone)]
+pub struct TextureImage {
+    pub name: String,
+    /// PNG em `data:image/png;base64,...` — o `TextureLoader` do Three.js lê direto.
+    pub png: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Extrai os pixels do mip0 de uma textura e devolve como PNG.
+///
+/// `texindex` é o índice **cru** da tabela de texturas (mesmo número que o
+/// texinfo guarda), não a posição na lista compactada — que pula WADs externos.
+/// Textura com offset `-1` (vem de WAD) ou com mip ausente devolve `None`.
+pub fn texture_image(data: &[u8], lump: Lump, texindex: usize) -> Option<TextureImage> {
+    if lump.length == 0 {
+        return None;
+    }
+    let raw = lump_slice(data, lump, "textures").ok()?;
+    let mut cur = Cursor::new(raw);
+    let count = cur.u32().ok()? as usize;
+    if texindex >= count {
+        return None;
+    }
+    // Anda até a entrada `texindex` da tabela de offsets.
+    cur.skip(4 + texindex * 4).ok()?;
+    let offset = cur.i32().ok()?;
+    if offset < 0 {
+        return None;
+    }
+    let at = offset as usize;
+    let entry = raw.get(at..)?;
+    let mut mip = Cursor::new(entry);
+    let name = mip.fixed_str(16).ok()?;
+    let width = mip.u32().ok()?;
+    let height = mip.u32().ok()?;
+    let off0 = mip.u32().ok()?;
+    if off0 == 0 {
+        return None; // mip ausente → textura de WAD externo
+    }
+
+    let w = width as usize;
+    let h = height as usize;
+    let need = w.checked_mul(h)?;
+    let mip0 = at.checked_add(off0 as usize)?;
+    let pixels = raw.get(mip0..mip0 + need)?.to_vec();
+
+    // Paleta de 256 cores termina o lump: os bytes do mip0 são índices nela.
+    if raw.len() < 768 {
+        return None;
+    }
+    let palette = &raw[raw.len() - 768..];
+
+    let mut rgba = Vec::with_capacity(need * 4);
+    for &idx in &pixels {
+        let p = (idx as usize) * 3;
+        let r = *palette.get(p)?;
+        let g = *palette.get(p + 1)?;
+        let b = *palette.get(p + 2)?;
+        // 255 costuma ser o "cinza transparente" da paleta do GoldSrc.
+        let a = if idx == 255 { 0 } else { 255 };
+        rgba.extend_from_slice(&[r, g, b, a]);
+    }
+
+    let png = png_encode(w, h, &rgba)?;
+    let png = base64::engine::general_purpose::STANDARD.encode(&png);
+    Some(TextureImage {
+        name,
+        png: format!("data:image/png;base64,{png}"),
+        width,
+        height,
+    })
+}
+
+/// PNG mínimo, comprimido com blocos *stored* (sem zlib real).
+///
+/// Um JPEG de foto de parede não precisa de deflate; o que importa aqui é a
+/// textura subir para o WebView do jeito que todos os carregadores conhecem.
+fn png_encode(width: usize, height: usize, rgba: &[u8]) -> Option<Vec<u8>> {
+    let stride = width.checked_mul(4)?;
+    let mut scan = Vec::with_capacity((stride + 1) * height);
+    for y in 0..height {
+        scan.push(0); // filtro "None" para a linha inteira
+        let row = y.checked_mul(stride)?;
+        scan.extend_from_slice(rgba.get(row..row + stride)?);
+    }
+    let idat = zlib_compress(&scan);
+
+    let mut out = Vec::with_capacity(idat.len() + 64);
+    out.extend_from_slice(&[0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+
+    let mut ihdr = Vec::with_capacity(13);
+    ihdr.extend_from_slice(&(width as u32).to_be_bytes());
+    ihdr.extend_from_slice(&(height as u32).to_be_bytes());
+    ihdr.push(8); // bit depth
+    ihdr.push(6); // color type: RGBA
+    ihdr.extend_from_slice(&[0, 0, 0]); // compression, filter, interlace
+    write_png_chunk(&mut out, b"IHDR", &ihdr)?;
+    write_png_chunk(&mut out, b"IDAT", &idat)?;
+    write_png_chunk(&mut out, b"IEND", &[])?;
+    Some(out)
+}
+
+fn write_png_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) -> Option<()> {
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    out.extend_from_slice(kind);
+    out.extend_from_slice(data);
+    let crc = crc32(kind.iter().copied().chain(data.iter().copied()));
+    out.extend_from_slice(&crc.to_be_bytes());
+    Some(())
+}
+
+/// zlib (RFC 1950) via `flate2`: comprime de verdade, então um mapa com dezenas
+/// de texturas não vira dezenas de MB no IPC.
+fn zlib_compress(data: &[u8]) -> Vec<u8> {
+    let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    let _ = std::io::Write::write_all(&mut enc, data);
+    enc.finish().unwrap_or_default()
+}
+
+fn crc32(data: impl Iterator<Item = u8>) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for byte in data {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+        }
+    }
+    !crc
 }
