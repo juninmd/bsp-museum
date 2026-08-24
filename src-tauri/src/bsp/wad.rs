@@ -26,12 +26,33 @@ struct Wad {
     index: HashMap<String, (usize, usize)>,
 }
 
+/// Pasta do mod a partir do caminho do `.bsp` (`<mod>/maps/mapa.bsp` -> `<mod>`).
+/// É a raiz de onde `.wad` e `models/*.mdl` são resolvidos.
+pub fn mod_dir_of(map_path: &Path) -> PathBuf {
+    map_path.parent().and_then(|p| p.parent()).unwrap_or_else(|| Path::new(".")).to_path_buf()
+}
+
+/// Acha um arquivo (WAD, `.mdl`, qualquer coisa) na pasta do mod, ou no `valve/`
+/// irmão dela quando o mod é `cstrike` e o recurso é herdado do Half-Life base.
+pub fn find_asset(mod_dir: &Path, rel_path: &str) -> Option<PathBuf> {
+    let in_mod = mod_dir.join(rel_path);
+    if in_mod.is_file() {
+        return Some(in_mod);
+    }
+    if let Some(game) = mod_dir.parent() {
+        let in_valve = game.join("valve").join(rel_path);
+        if in_valve.is_file() {
+            return Some(in_valve);
+        }
+    }
+    None
+}
+
 impl WadSet {
     /// Monta o conjunto a partir da pasta do mapa e dos WADs que o worldspawn
     /// declara. Sempre inclui `cstrike.wad` e `valve/halflife.wad` como reforço.
     pub fn for_map(map_path: &Path, declared: &[String]) -> Self {
-        let mod_dir =
-            map_path.parent().and_then(|p| p.parent()).unwrap_or_else(|| Path::new("."));
+        let mod_dir = mod_dir_of(map_path);
         let mut names: Vec<String> = declared.to_vec();
         for fallback in ["cstrike.wad", "halflife.wad"] {
             names.push(fallback.to_string());
@@ -40,7 +61,7 @@ impl WadSet {
         let mut paths: Vec<PathBuf> = Vec::new();
         let mut seen: BTreeSet<String> = BTreeSet::new();
         for n in &names {
-            if let Some(p) = find_wad(mod_dir, n) {
+            if let Some(p) = find_asset(&mod_dir, n) {
                 if seen.insert(p.display().to_string()) {
                     paths.push(p);
                 }
@@ -73,21 +94,6 @@ impl WadSet {
         self.cache.insert(key, found.clone());
         found
     }
-}
-
-fn find_wad(mod_dir: &Path, name: &str) -> Option<PathBuf> {
-    let in_mod = mod_dir.join(name);
-    if in_mod.is_file() {
-        return Some(in_mod);
-    }
-    // Irmão da pasta do mod (`Half-Life/valve/<wad>` quando o mod é `cstrike`).
-    if let Some(game) = mod_dir.parent() {
-        let in_valve = game.join("valve").join(name);
-        if in_valve.is_file() {
-            return Some(in_valve);
-        }
-    }
-    None
 }
 
 /// Lê o cabeçalho do WAD e indexa os lumps de textura por nome.

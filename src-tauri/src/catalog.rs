@@ -609,6 +609,31 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
         }
     }
 
+    // Props: entidades com `.mdl` explícito no BSP (cycler, monster_generic
+    // etc.) entram nos mesmos arrays da malha do brush — sem controle
+    // separado na UI, o toggle "texturizado" que já existe liga tudo junto.
+    // Arquivo `.mdl` ausente ou corrompido é pulado em silêncio: não pode
+    // derrubar a leitura do mapa inteiro por causa de um prop.
+    let mod_dir = wad::mod_dir_of(path);
+    for inst in &ents.model_instances {
+        let Some(model_path) = wad::find_asset(&mod_dir, &inst.model) else { continue };
+        let Ok(model_bytes) = std::fs::read(&model_path) else { continue };
+        let Ok(prop) = crate::mdl::parse(&model_bytes) else { continue };
+
+        let base_tex = textures.len() as u32;
+        for t in &prop.textures {
+            textures.push(MeshTexture { name: t.name.clone(), png: Some(t.png.clone()) });
+        }
+        let place = crate::mdl::entity_transform(inst.origin, inst.angles);
+        for v in prop.positions.chunks_exact(3) {
+            let world = place([v[0], v[1], v[2]]);
+            positions.extend_from_slice(&world);
+        }
+        uvs.extend_from_slice(&prop.uvs);
+        texindex.extend(prop.texindex.iter().map(|t| base_tex + t));
+        triangles += prop.texindex.len();
+    }
+
     Ok(MeshDetail {
         positions,
         uvs,

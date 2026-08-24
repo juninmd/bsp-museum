@@ -786,6 +786,74 @@ fn lump_de_iluminacao_vazio_marca_fullbright() {
 }
 
 #[test]
+fn mesh_inclui_prop_de_entidade_com_model_mdl() {
+    // Estrutura de mod: <root>/maps/de_teste.bsp e <root>/models/prop.mdl —
+    // mesma raiz que catalog::mesh usa pra resolver .mdl (wad::mod_dir_of).
+    let root = std::env::temp_dir().join("bsp-museum-tests-mdl");
+    let maps = root.join("maps");
+    let models = root.join("models");
+    std::fs::create_dir_all(&maps).unwrap();
+    std::fs::create_dir_all(&models).unwrap();
+    std::fs::write(models.join("prop.mdl"), crate::mdl::synthetic_mdl()).unwrap();
+
+    let text = r#"{
+"classname" "worldspawn"
+}
+{
+"classname" "cycler"
+"model" "models/prop.mdl"
+"origin" "0 0 0"
+}"#;
+    let data = BspBuilder::new()
+        .texture("concrete", true)
+        .floor(0.0, 0.0, 64.0, 64.0, 0.0, 0)
+        .model([0.0; 3], [64.0, 64.0, 32.0])
+        .entities(text)
+        .build();
+    let path = maps.join("de_teste.bsp");
+    std::fs::write(&path, &data).unwrap();
+
+    let mesh = catalog::mesh(&path).expect("malha com prop");
+    // 2 triângulos do chão (fan de 4 vértices) + 1 do prop.
+    assert_eq!(mesh.triangles, 3, "faltou o triângulo do prop na malha");
+    assert!(
+        mesh.textures.iter().any(|t| t.name == "skin1"),
+        "textura do .mdl não entrou na lista de texturas da malha"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn mesh_ignora_mdl_ausente_sem_quebrar_o_mapa() {
+    let root = std::env::temp_dir().join("bsp-museum-tests-mdl-ausente");
+    let maps = root.join("maps");
+    std::fs::create_dir_all(&maps).unwrap();
+
+    let text = r#"{
+"classname" "worldspawn"
+}
+{
+"classname" "cycler"
+"model" "models/nao_existe.mdl"
+"origin" "0 0 0"
+}"#;
+    let data = BspBuilder::new()
+        .texture("concrete", true)
+        .floor(0.0, 0.0, 64.0, 64.0, 0.0, 0)
+        .model([0.0; 3], [64.0, 64.0, 32.0])
+        .entities(text)
+        .build();
+    let path = maps.join("de_teste.bsp");
+    std::fs::write(&path, &data).unwrap();
+
+    let mesh = catalog::mesh(&path).expect("mapa abre mesmo com .mdl ausente");
+    assert_eq!(mesh.triangles, 2, "só o chão, sem o prop que não existe no disco");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn varredura_acha_bsp_em_subpasta() {
     let root = std::env::temp_dir().join("bsp-museum-scan");
     let sub = root.join("sub");
