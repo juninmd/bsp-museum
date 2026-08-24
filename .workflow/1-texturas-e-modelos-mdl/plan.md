@@ -149,3 +149,9 @@ seguem a política padrão: peço confirmação antes de cada um, salvo indicaç
 - `.spr` (sprites de partícula).
 - Aviso visual de `.mdl` referenciado e ausente (variante C) — hoje fica silencioso.
 - Modelos de arma/jogador sem `model` explícito no BSP (dependeria de tabela hardcoded por mod).
+- **Skin family de verdade** (drift descoberto no passo 7): decodificar a tabela `skinindex`
+  (`numskinfamilies × numskinref`) do `.mdl` e deixar o visualizador avulso trocar entre elas. O
+  parser desta entrega só decodifica o conjunto base de texturas — suficiente pra props estáticos,
+  não pra modelo de jogador com skin de time.
+- Validar a composição de rotação por bone (`rotation_matrix`) contra um `.mdl` real — não deu pra
+  confirmar a ordem dos eixos neste ambiente (doc da Valve bloqueou fetch automatizado).

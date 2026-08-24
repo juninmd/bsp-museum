@@ -31,6 +31,38 @@ Documentação e fontes usadas para implementar a vista 3D e a decodificação d
   24/32-bit, com origem controlada pelo bit `0x20` do dezcriptor.
   - <https://en.wikipedia.org/wiki/Truevision_TGA> (formato TGA)
 
+## Formato MDL do GoldSrc (studiomodel v10)
+
+- **Valve Developer Community — MDL/StudioMDL (GoldSrc)** — não foi possível buscar a página
+  diretamente neste ciclo (a VDC bloqueou o fetch automatizado com HTTP 403); o layout de
+  `studiohdr_t`/`mstudiobone_t`/`mstudiotexture_t`/`mstudiomodel_t`/`mstudiomesh_t`/
+  `mstudioseqdesc_t` usado no parser (`src-tauri/src/mdl/mod.rs`) vem de `studio.h` do SDK do
+  Half-Life — layout público, replicado em várias engines/loaders GoldSrc-compatíveis (ex.:
+  Xash3D, licença GPL) e em ferramentas de terceiros:
+  - <https://developer.valvesoftware.com/wiki/MDL_(GoldSrc)>
+  - <https://developer.valvesoftware.com/wiki/StudioMDL_(GoldSrc)>
+
+- **Textura do `.mdl`**: mesma paleta indexada de 256 cores do BSP/WAD (`mstudiotexture_t.width/
+  height/index`, pixels no offset `index`, paleta logo depois). A transparência é decidida por uma
+  *flag* na própria textura (`STUDIO_NF_MASKED`, `0x0040`), diferente da convenção de **nome**
+  (`{`) do BSP/WAD.
+
+- **Malha**: `bodypart` → `submodel` (`mstudiomodel_t`) → `mesh` (`mstudiomesh_t`, aponta pra uma
+  skin) → stream de comandos de triângulo (`i16 count`; positivo = fan, negativo = strip, `0`
+  termina o stream), cada vértice com `vertindex, normindex, s, t` — `s`/`t` em espaço de pixel da
+  textura, normalizados dividindo por `width`/`height`.
+
+- **Pose**: cada vértice pertence a um bone (`mstudiobone_t`); a posição final é a transform do
+  bone (composta pela cadeia de pais, usando `value[0..6]` = posição + rotação fixas do arquivo)
+  aplicada à posição local do vértice. Esta entrega só compõe essa pose de **repouso** — não
+  decodifica `mstudioanim_t` (dados de animação por sequência), então trocar a sequência
+  selecionada no visualizador não muda a geometria.
+
+- **Risco residual**: a ordem de composição dos ângulos de rotação por bone
+  (`rotation_matrix` em `mdl/mod.rs`) não pôde ser confirmada contra um `.mdl` real neste
+  ambiente — só foi validada com um modelo sintético (montado byte a byte no teste). Se um modelo
+  com mais de um bone sair com a pose torta, é o primeiro lugar a revisar.
+
 ## Renderização 3D no frontend
 
 - **Three.js** (`three` + `@types/three`): cena, `PerspectiveCamera`, `WebGLRenderer`,
