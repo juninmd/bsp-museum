@@ -11,6 +11,7 @@
   ],
   "awaiting": "iterate",
   "branch": "feat/texturas-e-modelos-mdl",
-  "pushed": false
+  "pushed": true,
+  "pr": "https://github.com/juninmd/bsp-museum/pull/2"
 
 }
