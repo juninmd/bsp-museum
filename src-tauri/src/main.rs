@@ -3,6 +3,7 @@
 
 mod bsp;
 mod catalog;
+mod mdl;
 #[cfg(test)]
 mod tests;
 
