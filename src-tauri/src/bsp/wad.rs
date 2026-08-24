@@ -32,7 +32,7 @@ impl WadSet {
         let mod_dir =
             map_path.parent().and_then(|p| p.parent()).unwrap_or_else(|| Path::new("."));
         let mut names: Vec<String> = declared.to_vec();
-        for fallback in ["cstrike.wad", "halflife.wad", "halflife.wad"] {
+        for fallback in ["cstrike.wad", "halflife.wad"] {
             names.push(fallback.to_string());
         }
 
@@ -141,7 +141,8 @@ fn texture_image(lump: &[u8]) -> Option<(String, u32, u32)> {
     let w = width as usize;
     let h = height as usize;
     let need = w.checked_mul(h)?;
-    let pixels = lump.get(off0..off0 + need)?;
+    let end = off0.checked_add(need)?;
+    let pixels = lump.get(off0..end)?;
 
     let palette = &lump[lump.len() - 768..];
     let mut rgba = Vec::with_capacity(need * 4);

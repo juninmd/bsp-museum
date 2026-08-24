@@ -37,7 +37,9 @@ pub fn tga_png(data: &[u8]) -> Option<String> {
     let descriptor = data[17];
     let top_down = descriptor & 0x20 != 0;
 
-    if width == 0 || height == 0 {
+    // mesmo teto do BMP: céu de mapa não passa de poucos milhares de pixels por lado.
+    const MAX_SIDE: usize = 8192;
+    if width == 0 || height == 0 || width > MAX_SIDE || height > MAX_SIDE {
         return None;
     }
     if colormap == 1 {
@@ -144,9 +146,16 @@ pub fn bmp_png(data: &[u8]) -> Option<String> {
     if !(channels == 3 || channels == 4) {
         return None;
     }
+    // Céu de mapa GoldSrc não passa de poucos milhares de pixels por lado; dimensões
+    // maiores só existem num BMP corrompido/malicioso e não devem virar alocação gigante.
+    const MAX_SIDE: usize = 8192;
+    if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE {
+        return None;
+    }
+    let out_len = w.checked_mul(h)?.checked_mul(4)?;
 
     let stride = ((w * channels + 3) / 4) * 4;
-    let mut out = vec![0u8; w * h * 4];
+    let mut out = vec![0u8; out_len];
     for r in 0..h {
         let src_row = if top_down { r } else { h - 1 - r };
         let base = offset + src_row * stride;

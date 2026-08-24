@@ -13,6 +13,10 @@ const slotsInput = document.querySelector<HTMLInputElement>("#slots")!;
 const drawer = document.querySelector<HTMLElement>("#drawer")!;
 const drawerBody = document.querySelector<HTMLElement>("#drawer-body")!;
 const scrim = document.querySelector<HTMLElement>("#scrim")!;
+const closeDrawerBtn = document.querySelector<HTMLButtonElement>("#close-drawer")!;
+
+/** elemento a devolver o foco quando o drawer fechar (o card que foi clicado/ativado) */
+let lastFocused: HTMLElement | null = null;
 
 let maps: MapSummary[] = [];
 let settings: Settings = { last_dir: null, slots: 32 };
@@ -129,6 +133,9 @@ function render() {
     const card = document.createElement("article");
     card.className = "card";
     card.dataset.path = map.path;
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", `abrir detalhes de ${map.name}`);
     if (problems.length) card.dataset.problem = "1";
 
     card.innerHTML = `
@@ -151,7 +158,13 @@ function render() {
         }
       </div>`;
 
-    card.addEventListener("click", () => openDetail(map));
+    card.addEventListener("click", () => openDetail(map, card));
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openDetail(map, card);
+      }
+    });
     gallery.append(card);
     lazyThumbs.observe(card);
   }
@@ -175,10 +188,13 @@ const SEVERITY_ICON: Record<Finding["severity"], string> = {
   info: "•",
 };
 
-async function openDetail(map: MapSummary) {
+async function openDetail(map: MapSummary, trigger?: HTMLElement) {
+  lastFocused = trigger ?? (document.activeElement as HTMLElement | null);
   drawer.hidden = false;
   scrim.hidden = false;
   drawerBody.innerHTML = `<div class="loading">lendo ${escapeHtml(map.name)}…</div>`;
+  document.addEventListener("keydown", onDrawerKeydown);
+  closeDrawerBtn.focus();
 
   try {
     const detail = await invoke<MapDetail>("map_detail", {
@@ -395,6 +411,26 @@ function detailHtml(d: MapDetail): string {
     </details>`;
 }
 
+/** mantém o Tab preso dentro do drawer enquanto ele estiver aberto (foco não vaza pro fundo) */
+function onDrawerKeydown(e: KeyboardEvent) {
+  if (e.key !== "Tab") return;
+  const focusable = Array.from(
+    drawer.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((el) => el.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0]!;
+  const last = focusable[focusable.length - 1]!;
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
 function closeDrawer() {
   detailCleanup?.();
   detailCleanup = null;
@@ -403,6 +439,9 @@ function closeDrawer() {
   drawer.hidden = true;
   scrim.hidden = true;
   drawerBody.replaceChildren();
+  document.removeEventListener("keydown", onDrawerKeydown);
+  lastFocused?.focus();
+  lastFocused = null;
 }
 
 async function loadDir(dir: string) {
@@ -442,10 +481,14 @@ slotsInput.addEventListener("change", async () => {
   render();
 });
 
-search.addEventListener("input", render);
+let searchDebounce = 0;
+search.addEventListener("input", () => {
+  window.clearTimeout(searchDebounce);
+  searchDebounce = window.setTimeout(render, 120);
+});
 modeFilter.addEventListener("change", render);
 sortBy.addEventListener("change", render);
-document.querySelector("#close-drawer")?.addEventListener("click", closeDrawer);
+closeDrawerBtn.addEventListener("click", closeDrawer);
 scrim.addEventListener("click", closeDrawer);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeDrawer();

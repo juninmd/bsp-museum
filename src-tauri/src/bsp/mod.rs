@@ -323,9 +323,12 @@ fn read_textures(data: &[u8], lump: Lump) -> Result<(Vec<Texture>, Vec<String>)>
         };
         let mut mip = Cursor::new(entry);
         let name = mip.fixed_str(16).unwrap_or_default();
-        let Ok(width) = mip.u32() else { continue };
-        let Ok(height) = mip.u32() else { continue };
-        let Ok(first_offset) = mip.u32() else { continue };
+        // entrada truncada perto do fim do lump: mantém o vetor alinhado à tabela crua,
+        // senão todo texindex seguinte aponta pro nome errado.
+        let (Ok(width), Ok(height), Ok(first_offset)) = (mip.u32(), mip.u32(), mip.u32()) else {
+            raw_texture_name.push(String::new());
+            continue;
+        };
         // offset de pixel 0 = textura vem de WAD externo; != 0 = embutida no BSP.
         textures.push(Texture { name: name.clone(), width, height, embedded: first_offset != 0 });
         raw_texture_name.push(name);
