@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { MeshDetail, SkyBox } from "./types.ts";
 
 export interface Viewer3D {
@@ -95,11 +96,23 @@ function makeBuckets(mesh: MeshDetail): { buckets: Bucket[]; zMin: number; zMax:
   return { buckets: order.map((id) => bucketOf.get(id)!), zMin, zMax };
 }
 
+export interface Mount3DOptions {
+  /**
+   * Modo "inspeção de objeto" (visualizador avulso de `.mdl`): luz mais
+   * uniforme (sem o sol único de cena externa, que deixa metade de um objeto
+   * pequeno no escuro) e normais suavizadas entre triângulos vizinhos — sem
+   * isso a malha (não indexada, sem normal real do arquivo) sai com a cara
+   * facetada de baixo-poly em vez da silhueta lisa que o jogo mostra.
+   */
+  inspect?: boolean;
+}
+
 /**
  * Monta a cena 3D orbitável dentro de `container`.
  * `textured` liga as texturas reais do BSP; desligado mostra a cor por altura.
  */
-export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: boolean): Viewer3D {
+export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: boolean, opts: Mount3DOptions = {}): Viewer3D {
+  const { inspect = false } = opts;
   const { buckets } = makeBuckets(mesh);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -115,17 +128,32 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
 
-  // Luz ambiente alta + hemisférica: sem isso o chão (mais baixo, cor fria) vira
-  // um vulto escuro sobre o fundo escuro e some de vista.
-  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-  const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x33373d, 0.6);
-  scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
-  sun.position.set(1, 2, 1.4);
-  scene.add(sun);
-  const fill = new THREE.DirectionalLight(0x8899bb, 0.25);
-  fill.position.set(-1, -0.5, -1);
-  scene.add(fill);
+  if (inspect) {
+    // Objeto pequeno visto de perto: um "sol" só deixa metade dele no escuro.
+    // Ambiente alto + 3 luzes de preenchimento em volta mostram a skin inteira.
+    scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+    const key = new THREE.DirectionalLight(0xffffff, 0.55);
+    key.position.set(1, 1.6, 1.2);
+    scene.add(key);
+    const fillA = new THREE.DirectionalLight(0xcfe0ff, 0.4);
+    fillA.position.set(-1.4, 0.6, -0.8);
+    scene.add(fillA);
+    const fillB = new THREE.DirectionalLight(0xfff3d6, 0.3);
+    fillB.position.set(0.2, -1, -1.4);
+    scene.add(fillB);
+  } else {
+    // Luz ambiente alta + hemisférica: sem isso o chão (mais baixo, cor fria) vira
+    // um vulto escuro sobre o fundo escuro e some de vista.
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x33373d, 0.6);
+    scene.add(hemi);
+    const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+    sun.position.set(1, 2, 1.4);
+    scene.add(sun);
+    const fill = new THREE.DirectionalLight(0x8899bb, 0.25);
+    fill.position.set(-1, -0.5, -1);
+    scene.add(fill);
+  }
 
   const flatMaterial = new THREE.MeshStandardMaterial({
     vertexColors: true,
@@ -139,10 +167,17 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
   const entries: { mesh: THREE.Mesh; texMaterial: THREE.MeshStandardMaterial }[] = [];
 
   for (const bucket of buckets) {
-    const geometry = new THREE.BufferGeometry();
+    let geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(bucket.positions, 3));
     geometry.setAttribute("uv", new THREE.Float32BufferAttribute(bucket.uvs, 2));
     geometry.setAttribute("color", new THREE.Float32BufferAttribute(bucket.colors, 3));
+    if (inspect) {
+      // A malha chega como triângulos soltos (sem índice, sem normal do
+      // arquivo) — welda os vértices que coincidem em posição/UV antes de
+      // calcular a normal, senão cada triângulo vira uma faceta própria e o
+      // modelo sai com cara de baixo-poly em vez da silhueta lisa do jogo.
+      geometry = mergeVertices(geometry);
+    }
     geometry.computeVertexNormals();
 
     const tex = bucket.textureIndex < textures.length ? textures[bucket.textureIndex] : undefined;
@@ -173,10 +208,12 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
   }
   scene.add(spawnGroup);
 
-  // Enquadra a câmera no modelo 0.
+  // Enquadra a câmera no modelo 0. Em modo inspeção (objeto pequeno e solto no
+  // meio de um domo vazio) a margem de mapa (1.4x) sobra tela de céu à toa —
+  // mais apertado (1.05x) deixa a skin ocupando o quadro de verdade.
   const { center, size } = fitTarget(mesh);
   const maxDim = Math.max(size[0], size[1], size[2], 1);
-  const dist = (maxDim / 2 / Math.tan((camera.fov * Math.PI) / 360)) * 1.4;
+  const dist = (maxDim / 2 / Math.tan((camera.fov * Math.PI) / 360)) * (inspect ? 1.05 : 1.4);
   camera.position.set(center[0] + dist * 0.8, center[1] + dist * 0.7, center[2] + dist);
   camera.near = Math.max(0.5, dist / 1000);
   camera.far = Math.max(10000, dist * 20);

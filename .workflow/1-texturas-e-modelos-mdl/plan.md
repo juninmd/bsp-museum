@@ -154,4 +154,12 @@ seguem a política padrão: peço confirmação antes de cada um, salvo indicaç
   parser desta entrega só decodifica o conjunto base de texturas — suficiente pra props estáticos,
   não pra modelo de jogador com skin de time.
 - Validar a composição de rotação por bone (`rotation_matrix`) contra um `.mdl` real — não deu pra
-  confirmar a ordem dos eixos neste ambiente (doc da Valve bloqueou fetch automatizado).
+  confirmar a ordem dos eixos neste ambiente (doc da Valve bloqueou fetch automatizado). **Feito**
+  no smoke manual (`progress.md`): a pose bateu bem num modelo de jogador real.
+- **Sombreamento suave real** (rodada de iteração pós-smoke): tentei soldar vértices coincidentes
+  (`mergeVertices` do three.js) antes de calcular a normal no visualizador avulso — funciona nas
+  costuras onde o `.mdl` reusa o mesmo `vertindex` com o mesmo UV, mas boa parte do modelo continua
+  faceado de perto porque o formato declara vértices de novo (com UV levemente diferente) a cada
+  novo fan/strip, mesmo em superfície contínua sem costura de verdade. Corrigir isso direito
+  pediria decodificar as normais reais do `.mdl` (`mstudiomodel_t.normindex`, hoje ignoradas pelo
+  parser) em vez de recalcular — fica pro backlog.

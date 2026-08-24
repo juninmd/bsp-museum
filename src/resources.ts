@@ -43,5 +43,5 @@ export function mountModelViewer(container: HTMLElement, model: MdlSummary): Vie
     triangles: model.texindex.length,
     skipped: 0,
   };
-  return mount3D(container, mesh, true);
+  return mount3D(container, mesh, true, { inspect: true });
 }

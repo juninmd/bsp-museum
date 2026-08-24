@@ -140,3 +140,32 @@ Rodei `bun run app` de verdade contra a instalação local de Half-Life/CS 1.6 (
 
 Prints enviados ao usuário no chat (não commitados no repo — ficam em
 `.workflow/1-texturas-e-modelos-mdl/shot-*.png`, local, fora do PR).
+
+## Rodada de iteração 1 — "a visualização da skin precisa ser melhorada"
+
+Pedido do usuário depois de ver os prints do `terror.mdl` na aba Recursos. Diagnóstico a partir do
+próprio print: o modelo saía quase todo escuro (a iluminação do visualizador é a mesma "sol +
+hemisférica" ajustada pra mapa inteiro — pra um personagem pequeno, metade dele fica na sombra) e
+pequeno demais no quadro (margem de câmera de mapa, 1.4x, sobra tela de céu à toa num objeto só).
+
+**Feito** (commit a seguir):
+- `viewer3d.ts`: novo `Mount3DOptions.inspect` — quando ligado, troca a luz de "sol único de cena
+  externa" por um rig mais uniforme (ambiente alta + 3 luzes de preenchimento), aperta a margem de
+  câmera (1.4x → 1.05x) e tenta soldar vértices coincidentes (`mergeVertices` do three.js) antes de
+  calcular a normal, pra suavizar o sombreamento. Não mexe no modo mapa (chamada default do
+  `main.ts` não passa `opts`, comportamento inalterado — confirmado nos prints de `de_dust2`/`c1a0e`
+  depois da mudança, sem diferença visual ali).
+- `resources.ts`: passa `{ inspect: true }` pro `mount3D`.
+
+**Verify:** `bun run typecheck` + `bun run build` — ok, sem erro. Sem mudança no backend Rust
+(`cargo test` continua 71/71 do estado anterior, não precisou rodar de novo).
+
+**Smoke manual** (mesmo `terror.mdl`, mesma pasta): comparei o antes/depois lado a lado —
+- Câmera mais próxima e luz mais uniforme deixam a skin claramente mais visível e legível à
+  distância normal de visualização (print `shot-19-terror-final.png` vs. o antigo
+  `shot-14-terror-zoom.png`) — isso resolve a parte prática do pedido.
+- **Limitação que ficou**: de perto (zoom forçado bem além do normal,
+  `shot-20-terror-close.png`), o modelo ainda mostra facetas — `mergeVertices` só suaviza onde o
+  `.mdl` reusa exatamente o mesmo vértice com o mesmo UV entre triângulos vizinhos; boa parte da
+  malha declara vértice de novo a cada fan/strip mesmo sem costura real. Documentado no
+  `plan.md` como backlog (decodificar `mstudiomodel_t.normindex` de verdade, em vez de recalcular).
