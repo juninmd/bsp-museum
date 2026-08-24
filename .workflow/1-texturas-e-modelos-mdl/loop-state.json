@@ -1,0 +1,12 @@
+{
+  "issue": "https://github.com/juninmd/bsp-museum/issues/1",
+  "slug": "1-texturas-e-modelos-mdl",
+  "stage": "implement",
+  "artifacts": [
+    ".workflow/1-texturas-e-modelos-mdl/research.md",
+    "https://claude.ai/code/artifact/85cceb27-3921-4413-9f08-fa0939d7db3e",
+    ".workflow/1-texturas-e-modelos-mdl/prototype.md",
+    ".workflow/1-texturas-e-modelos-mdl/plan.md"
+  ],
+  "awaiting": null
+}

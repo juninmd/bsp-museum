@@ -1,4 +1,5 @@
 pub mod entities;
+pub mod palette;
 pub mod reader;
 pub mod render;
 pub mod sky;
@@ -361,8 +362,12 @@ pub fn texture_image(data: &[u8], lump: Lump, texindex: usize) -> Option<Texture
     if texindex >= count {
         return None;
     }
-    // Anda até a entrada `texindex` da tabela de offsets.
-    cur.skip(4 + texindex * 4).ok()?;
+    // Anda até a entrada `texindex` da tabela de offsets. `cur` já está em 4
+    // (logo depois do `count`), então falta andar só `texindex * 4` — não
+    // `4 + texindex * 4`: esse `+4` a mais lia a entrada seguinte da tabela
+    // (textura 0 saía com os pixels da textura 1, e a última textura saía
+    // vazia ou com lixo). Bug real, não só de transparência.
+    cur.skip(texindex * 4).ok()?;
     let offset = cur.i32().ok()?;
     if offset < 0 {
         return None;
@@ -390,16 +395,10 @@ pub fn texture_image(data: &[u8], lump: Lump, texindex: usize) -> Option<Texture
     }
     let palette = &raw[raw.len() - 768..];
 
-    let mut rgba = Vec::with_capacity(need * 4);
-    for &idx in &pixels {
-        let p = (idx as usize) * 3;
-        let r = *palette.get(p)?;
-        let g = *palette.get(p + 1)?;
-        let b = *palette.get(p + 2)?;
-        // 255 costuma ser o "cinza transparente" da paleta do GoldSrc.
-        let a = if idx == 255 { 0 } else { 255 };
-        rgba.extend_from_slice(&[r, g, b, a]);
-    }
+    // Só textura `{`-prefixada usa o índice 255 como buraco (convenção do
+    // Quake/GoldSrc — grade, cerca, vidro); numa textura comum é só mais uma cor.
+    let transparent = name.starts_with('{');
+    let rgba = palette::decode_indexed(&pixels, palette, transparent)?;
 
     let png = png_encode(w, h, &rgba)?;
     let png = base64::engine::general_purpose::STANDARD.encode(&png);

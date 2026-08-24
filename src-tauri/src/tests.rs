@@ -7,7 +7,7 @@
 use crate::bsp::entities::{self, GameMode};
 use crate::bsp::reader::BspError;
 use crate::bsp::render::{self, RenderOptions};
-use crate::bsp::{Bsp, GOLDSRC_VERSION, LUMP_COUNT};
+use crate::bsp::{Bsp, Lump, GOLDSRC_VERSION, LUMP_COUNT};
 use crate::catalog;
 
 const LUMP_ENTITIES: usize = 0;
@@ -565,6 +565,128 @@ fn teto_nunca_entra_na_planta() {
     let data = builder.model([0.0; 3], [64.0, 64.0, 64.0]).build();
     let bsp = Bsp::parse(&data).unwrap();
     assert_eq!(render::top_down(&bsp, &[], RenderOptions::detail()).polygons, 0);
+}
+
+// ---------------------------------------------------------------- pixels de textura
+
+/// Monta o lump de texturas cru (tabela + 1 miptex com pixels reais + paleta):
+/// o suficiente pra chamar `bsp::texture_image` sem depender do `BspBuilder`
+/// (que não grava pixel nenhum, só o cabeçalho da tabela).
+fn texture_lump_with_pixels(name: &str, w: u32, h: u32, pixel_idx: u8, idx255_rgb: [u8; 3]) -> Vec<u8> {
+    let mut raw_name = [0u8; 16];
+    let bytes = name.as_bytes();
+    raw_name[..bytes.len().min(15)].copy_from_slice(&bytes[..bytes.len().min(15)]);
+
+    let mut body = Vec::new();
+    body.extend_from_slice(&raw_name);
+    body.extend_from_slice(&w.to_le_bytes());
+    body.extend_from_slice(&h.to_le_bytes());
+    body.extend_from_slice(&40u32.to_le_bytes()); // mip0 logo após o miptex_t (16+4*4+4*4)
+    body.extend_from_slice(&[0u8; 12]); // offsets[1..4], não usados
+    body.extend_from_slice(&vec![pixel_idx; (w * h) as usize]);
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&1u32.to_le_bytes()); // count
+    out.extend_from_slice(&8i32.to_le_bytes()); // offset da única entrada (4 + 1*4)
+    out.extend_from_slice(&body);
+
+    let mut palette = vec![0u8; 768];
+    palette[765..768].copy_from_slice(&idx255_rgb);
+    out.extend_from_slice(&palette);
+    out
+}
+
+/// Descompacta o `data:image/png;base64,...` de volta em pixels RGBA planos.
+/// Só entende o que `png_encode` gera (8-bit RGBA, filtro "None" em toda linha)
+/// — não é um decoder de PNG geral, só o bastante pra provar o alpha do pixel.
+fn decode_test_png(data_url: &str) -> Vec<u8> {
+    let b64 = data_url.strip_prefix("data:image/png;base64,").expect("data URL de PNG");
+    let png = base64_decode(b64);
+    let mut pos = 8usize; // assinatura PNG
+    let mut width = 0u32;
+    let mut height = 0u32;
+    let mut idat = Vec::new();
+    while pos + 8 <= png.len() {
+        let len = u32::from_be_bytes(png[pos..pos + 4].try_into().unwrap()) as usize;
+        let kind = &png[pos + 4..pos + 8];
+        let data = &png[pos + 8..pos + 8 + len];
+        match kind {
+            b"IHDR" => {
+                width = u32::from_be_bytes(data[0..4].try_into().unwrap());
+                height = u32::from_be_bytes(data[4..8].try_into().unwrap());
+            }
+            b"IDAT" => idat.extend_from_slice(data),
+            b"IEND" => break,
+            _ => {}
+        }
+        pos += 8 + len + 4; // + CRC
+    }
+    let mut scan = Vec::new();
+    std::io::Read::read_to_end(&mut flate2::read::ZlibDecoder::new(&idat[..]), &mut scan).unwrap();
+    let stride = width as usize * 4;
+    let mut rgba = Vec::with_capacity(stride * height as usize);
+    for row in scan.chunks(stride + 1) {
+        rgba.extend_from_slice(&row[1..]); // pula o byte de filtro (sempre 0)
+    }
+    rgba
+}
+
+#[test]
+fn textura_comum_nao_fura_no_indice_255() {
+    let raw = texture_lump_with_pixels("wall01", 1, 1, 255, [200, 10, 10]);
+    let lump = Lump { offset: 0, length: raw.len() };
+    let img = crate::bsp::texture_image(&raw, lump, 0).expect("decodifica");
+    let rgba = decode_test_png(&img.png);
+    assert_eq!(rgba, vec![200, 10, 10, 255], "sem `{{`, o índice 255 é só mais uma cor");
+}
+
+/// Mesmo layout de `texture_lump_with_pixels`, mas com N texturas na tabela —
+/// pra provar que `texture_image(texindex)` pega a entrada certa e não a
+/// seguinte (bug real corrigido junto do gate de transparência).
+fn texture_lump_multi(names_and_pixels: &[(&str, u8)]) -> Vec<u8> {
+    let count = names_and_pixels.len();
+    let table_size = 4 + count * 4;
+    let mut bodies = Vec::new();
+    let mut offsets = Vec::new();
+    for (name, pixel_idx) in names_and_pixels {
+        offsets.push((table_size + bodies.len()) as i32);
+        let mut raw_name = [0u8; 16];
+        let bytes = name.as_bytes();
+        raw_name[..bytes.len().min(15)].copy_from_slice(&bytes[..bytes.len().min(15)]);
+        bodies.extend_from_slice(&raw_name);
+        bodies.extend_from_slice(&1u32.to_le_bytes()); // width
+        bodies.extend_from_slice(&1u32.to_le_bytes()); // height
+        bodies.extend_from_slice(&40u32.to_le_bytes()); // mip0
+        bodies.extend_from_slice(&[0u8; 12]);
+        bodies.push(*pixel_idx);
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(&(count as u32).to_le_bytes());
+    for o in offsets {
+        out.extend_from_slice(&o.to_le_bytes());
+    }
+    out.extend_from_slice(&bodies);
+    out.extend_from_slice(&[0u8; 768]); // paleta neutra (não é o que este teste checa)
+    out
+}
+
+#[test]
+fn texture_image_pega_a_entrada_certa_da_tabela_nao_a_seguinte() {
+    let raw = texture_lump_multi(&[("wall01", 10), ("wall02", 20), ("wall03", 30)]);
+    let lump = Lump { offset: 0, length: raw.len() };
+    for (i, expected_name) in ["wall01", "wall02", "wall03"].into_iter().enumerate() {
+        let img = crate::bsp::texture_image(&raw, lump, i).unwrap_or_else(|| panic!("textura {i}"));
+        assert_eq!(img.name, expected_name, "texindex {i} devolveu a textura errada");
+    }
+}
+
+#[test]
+fn textura_chave_fura_no_indice_255() {
+    let raw = texture_lump_with_pixels("{grade", 1, 1, 255, [200, 10, 10]);
+    let lump = Lump { offset: 0, length: raw.len() };
+    let img = crate::bsp::texture_image(&raw, lump, 0).expect("decodifica");
+    let rgba = decode_test_png(&img.png);
+    assert_eq!(rgba, vec![200, 10, 10, 0], "com `{{`, o índice 255 vira buraco");
 }
 
 // ---------------------------------------------------------------- catálogo
