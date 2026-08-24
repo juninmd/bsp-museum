@@ -854,6 +854,37 @@ fn mesh_ignora_mdl_ausente_sem_quebrar_o_mapa() {
 }
 
 #[test]
+fn list_model_dirs_agrupa_por_pasta_e_ignora_lixo() {
+    let root = std::env::temp_dir().join("bsp-museum-tests-model-dirs");
+    let player = root.join("models").join("player");
+    let weapons = root.join("models").join("weapons");
+    std::fs::create_dir_all(&player).unwrap();
+    std::fs::create_dir_all(&weapons).unwrap();
+    std::fs::write(player.join("terror.mdl"), b"x").unwrap();
+    std::fs::write(player.join("leet.mdl"), b"x").unwrap();
+    std::fs::write(weapons.join("v_ak47.mdl"), b"x").unwrap();
+    std::fs::write(weapons.join("readme.txt"), b"nao e modelo").unwrap();
+
+    let dirs = catalog::list_model_dirs(&root);
+    let player_dir = dirs.iter().find(|d| d.path == player.to_string_lossy()).expect("pasta player");
+    assert_eq!(player_dir.count, 2);
+    let weapons_dir = dirs.iter().find(|d| d.path == weapons.to_string_lossy()).expect("pasta weapons");
+    assert_eq!(weapons_dir.count, 1);
+
+    let models = catalog::list_models(&weapons);
+    assert_eq!(models.len(), 1);
+    assert!(models[0].ends_with("v_ak47.mdl"));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn load_model_devolve_erro_legivel_pra_arquivo_que_nao_e_mdl() {
+    let path = write_temp("nao-e-modelo.mdl", b"lixo, nao e um mdl valido");
+    assert!(catalog::load_model(&path).is_err());
+}
+
+#[test]
 fn varredura_acha_bsp_em_subpasta() {
     let root = std::env::temp_dir().join("bsp-museum-scan");
     let sub = root.join("sub");
