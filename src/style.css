@@ -145,6 +145,13 @@ button:hover {
   padding: 1rem;
 }
 
+/* `display: grid` acima tem a mesma especificidade do `[hidden]{display:none}`
+   do user-agent, e regra de autor sempre ganha de UA em empate — sem isso a
+   galeria continua desenhada por baixo da aba Recursos mesmo com `hidden`. */
+.gallery[hidden] {
+  display: none;
+}
+
 .empty {
   grid-column: 1 / -1;
   color: var(--dim);
