@@ -115,13 +115,28 @@ verde (71 testes + 6 ignorados que precisam de uma pasta de mapas real — mesmo
 existia). `bun run build` verde. Nenhum push feito ainda — aguardando autorização explícita antes
 de empurrar a branch e abrir o PR (política do projeto: nada de push sem confirmação).
 
-**Pendências que precisam de teste manual com jogo real instalado** (não dá pra automatizar sem um
-`.mdl`/mapa de verdade no ambiente):
-1. Abrir um mapa real com prop `.mdl` (`cycler`, `monster_generic`) e conferir visualmente se a
-   posição/pose bate com o jogo — é onde a composição de rotação por bone não validada pode
-   aparecer torta.
-2. Comparar visualmente uma textura antes/depois do fix de transparência num mapa real (ex.
-   `de_dust2`) — o teste sintético prova a lógica, não prova que era *essa* a causa do relato
-   original.
-3. Abrir a aba Recursos apontando pra uma pasta `cstrike/` de verdade e navegar
-   `models/player`/`models/weapons`.
+## Smoke manual com jogo real (feito depois do PR aberto)
+
+Rodei `bun run app` de verdade contra a instalação local de Half-Life/CS 1.6 (Steam) e dirigi a UI
+(`de_dust2`, `c1a0e` — "Anomalous Materials" — e a aba Recursos com `cstrike/models`):
+
+1. **`de_dust2` texturizado**: abre sem buraco de transparência indevido — os dois bugs do passo
+   1+2 (gate `{` e o off-by-one) resolvem o relato original.
+2. **Props no mapa (`c1a0e`)**: as entidades `fungus`/`hair` (decorativas do Xen) aparecem como
+   malhas próprias, separadas do brush, na posição certa perto do spawn CT — confirma o passo 5.
+3. **Aba Recursos**: abriu `models/player/terror/terror.mdl` isolado, com textura real (colete,
+   máscara, luvas, botas) e a pose de repouso **coerente** — braços e pernas no lugar certo, sem
+   deformação visível. Isso valida na prática a composição de rotação por bone
+   (`rotation_matrix`) que o `plan.md`/`README.md` marcavam como risco não confirmado: funcionou
+   num modelo real de múltiplos bones, não só no sintético. Ainda vale manter a ressalva nos docs
+   (não testei todos os modelos, só este), mas o risco baixou de "não validado" pra "validado num
+   caso real".
+4. **Bug real achado nesse smoke** (fora do que os testes automatizados cobrem — UI pura):
+   `switchView()` setava `gallery.hidden = true`/`resources.hidden = true` mas `.gallery {
+   display: grid }` tem a mesma especificidade do `[hidden]{display:none}` do user-agent, e regra
+   de autor sempre vence empate com UA — a galeria de mapas continuava desenhada por baixo da aba
+   Recursos. Corrigido (`src/style.css`, `.gallery[hidden]{display:none}`) e empurrado como commit
+   `5e38afe`.
+
+Prints enviados ao usuário no chat (não commitados no repo — ficam em
+`.workflow/1-texturas-e-modelos-mdl/shot-*.png`, local, fora do PR).
