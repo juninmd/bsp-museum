@@ -423,6 +423,58 @@ fn resume_worldspawn_e_spawns() {
 }
 
 #[test]
+fn le_angulos_como_vetor() {
+    let ents = entities::parse("{\"angles\" \"0 90 0\"}");
+    assert_eq!(entities::angles_of(&ents[0]), [0.0, 90.0, 0.0]);
+}
+
+#[test]
+fn sem_angulos_vira_zero_em_vez_de_descartar_a_entidade() {
+    let ents = entities::parse("{\"classname\" \"cycler\"}");
+    assert_eq!(entities::angles_of(&ents[0]), [0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn angulos_malformados_viram_zero() {
+    let ents = entities::parse("{\"angles\" \"0 abc 0\"}");
+    assert_eq!(entities::angles_of(&ents[0]), [0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn entidade_com_model_mdl_vira_instancia() {
+    let text = r#"{
+"classname" "cycler"
+"model" "models/barney.mdl"
+"origin" "16 32 8"
+"angles" "0 180 0"
+}
+{
+"classname" "info_player_start"
+"origin" "0 0 0"
+}"#;
+    let summary = entities::summarize(&entities::parse(text));
+    assert_eq!(summary.model_instances.len(), 1);
+    let inst = &summary.model_instances[0];
+    assert_eq!(inst.classname, "cycler");
+    assert_eq!(inst.model, "models/barney.mdl");
+    assert_eq!(inst.origin, [16.0, 32.0, 8.0]);
+    assert_eq!(inst.angles, [0.0, 180.0, 0.0]);
+}
+
+#[test]
+fn entidade_sem_model_nao_vira_instancia() {
+    let summary = entities::summarize(&entities::parse(SIMPLE_ENTITIES));
+    assert!(summary.model_instances.is_empty());
+}
+
+#[test]
+fn model_que_nao_termina_em_mdl_e_ignorado() {
+    let text = r#"{"classname" "func_wall" "model" "*3"}"#;
+    let summary = entities::summarize(&entities::parse(text));
+    assert!(summary.model_instances.is_empty(), "modelo de brush (*N) não é .mdl");
+}
+
+#[test]
 fn wad_perde_o_caminho_de_quem_compilou() {
     let summary = entities::summarize(&entities::parse(SIMPLE_ENTITIES));
     assert_eq!(summary.wads, vec!["cstrike.wad", "halflife.wad"]);
