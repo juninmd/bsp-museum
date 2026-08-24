@@ -3,6 +3,7 @@
 
 mod bsp;
 mod catalog;
+mod mdl;
 #[cfg(test)]
 mod tests;
 
@@ -104,6 +105,25 @@ fn export_svg(target: String, svg: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn list_model_dirs(root: String) -> Result<Vec<catalog::ModelDir>, String> {
+    let path = PathBuf::from(&root);
+    if !path.is_dir() {
+        return Err(format!("não é uma pasta: {root}"));
+    }
+    Ok(catalog::list_model_dirs(&path))
+}
+
+#[tauri::command]
+fn list_models(dir: String) -> Result<Vec<String>, String> {
+    Ok(catalog::list_models(&PathBuf::from(dir)))
+}
+
+#[tauri::command]
+fn load_model(path: String) -> Result<catalog::MdlSummary, String> {
+    catalog::load_model(&PathBuf::from(path))
+}
+
+#[tauri::command]
 fn load_settings(state: tauri::State<'_, AppState>) -> Settings {
     std::fs::read_to_string(&state.config_file)
         .ok()
@@ -156,6 +176,9 @@ fn main() {
             map_detail,
             map_mesh,
             export_svg,
+            list_model_dirs,
+            list_models,
+            load_model,
             load_settings,
             save_settings,
             clear_cache

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { Finding, MapDetail, MapSummary, MeshDetail, Settings } from "./types.ts";
+import { mountModelViewer } from "./resources.ts";
+import type { Finding, MapDetail, MapSummary, MdlSummary, MeshDetail, ModelDir, Settings } from "./types.ts";
 import { mount3D, type Viewer3D } from "./viewer3d.ts";
 
 const gallery = document.querySelector<HTMLElement>("#gallery")!;
@@ -14,6 +15,18 @@ const drawer = document.querySelector<HTMLElement>("#drawer")!;
 const drawerBody = document.querySelector<HTMLElement>("#drawer-body")!;
 const scrim = document.querySelector<HTMLElement>("#scrim")!;
 const closeDrawerBtn = document.querySelector<HTMLButtonElement>("#close-drawer")!;
+
+const navMaps = document.querySelector<HTMLButtonElement>("#nav-maps")!;
+const navResources = document.querySelector<HTMLButtonElement>("#nav-resources")!;
+const mapControls = document.querySelector<HTMLElement>("#map-controls")!;
+const resourcesSection = document.querySelector<HTMLElement>("#resources")!;
+const resPickBtn = document.querySelector<HTMLButtonElement>("#res-pick")!;
+const resRootLabel = document.querySelector<HTMLElement>("#res-root")!;
+const resDirs = document.querySelector<HTMLElement>("#res-dirs")!;
+const resFiles = document.querySelector<HTMLElement>("#res-files")!;
+const resViewer3d = document.querySelector<HTMLElement>("#res-viewer3d")!;
+const resViewerToolbar = document.querySelector<HTMLElement>("#res-viewer-toolbar")!;
+const resSequence = document.querySelector<HTMLSelectElement>("#res-sequence")!;
 
 /** elemento a devolver o foco quando o drawer fechar (o card que foi clicado/ativado) */
 let lastFocused: HTMLElement | null = null;
@@ -467,6 +480,107 @@ function fillModeFilter() {
   }
   modeFilter.value = current;
 }
+
+// -------------------------------------------------------------- Recursos (aba avulsa)
+
+let resViewer: Viewer3D | null = null;
+let resRoot = "";
+
+function switchView(view: "maps" | "resources") {
+  const showMaps = view === "maps";
+  navMaps.classList.toggle("active", showMaps);
+  navMaps.setAttribute("aria-pressed", String(showMaps));
+  navResources.classList.toggle("active", !showMaps);
+  navResources.setAttribute("aria-pressed", String(!showMaps));
+  mapControls.hidden = !showMaps;
+  gallery.hidden = !showMaps;
+  statusBar.hidden = !showMaps;
+  resourcesSection.hidden = showMaps;
+  if (showMaps) {
+    resViewer?.dispose();
+    resViewer = null;
+  }
+}
+
+function renderResDirs(dirs: ModelDir[]) {
+  resDirs.replaceChildren();
+  if (!dirs.length) {
+    resDirs.innerHTML = `<p class="empty">Nenhum .mdl encontrado nessa pasta.</p>`;
+    return;
+  }
+  for (const dir of dirs) {
+    const item = document.createElement("button");
+    item.className = "res-item";
+    item.textContent = `${dir.name} (${dir.count})`;
+    item.addEventListener("click", async () => {
+      resDirs.querySelectorAll(".res-item").forEach((el) => el.classList.remove("active"));
+      item.classList.add("active");
+      const files = await invoke<string[]>("list_models", { dir: dir.path });
+      renderResFiles(files);
+    });
+    resDirs.append(item);
+  }
+}
+
+function renderResFiles(files: string[]) {
+  resFiles.replaceChildren();
+  if (!files.length) {
+    resFiles.innerHTML = `<p class="empty">Pasta vazia.</p>`;
+    return;
+  }
+  for (const path of files) {
+    const name = path.split(/[\\/]/).pop() ?? path;
+    const item = document.createElement("button");
+    item.className = "res-item";
+    item.textContent = name;
+    item.addEventListener("click", async () => {
+      resFiles.querySelectorAll(".res-item").forEach((el) => el.classList.remove("active"));
+      item.classList.add("active");
+      await openModel(path);
+    });
+    resFiles.append(item);
+  }
+}
+
+async function openModel(path: string) {
+  resViewer?.dispose();
+  resViewer = null;
+  resViewerToolbar.hidden = true;
+  resViewer3d.innerHTML = `<div class="loading">decodificando modelo…</div>`;
+  try {
+    const model = await invoke<MdlSummary>("load_model", { path });
+    resViewer3d.replaceChildren();
+    resViewer = mountModelViewer(resViewer3d, model);
+    resSequence.replaceChildren();
+    for (const seq of model.sequences) resSequence.append(new Option(seq, seq));
+    resViewerToolbar.hidden = model.sequences.length === 0;
+  } catch (err) {
+    resViewer3d.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
+  }
+}
+
+navMaps.addEventListener("click", () => switchView("maps"));
+navResources.addEventListener("click", () => switchView("resources"));
+
+resPickBtn.addEventListener("click", async () => {
+  const dir = await open({ directory: true, multiple: false, title: "pasta do mod (ou de models/)" });
+  if (typeof dir !== "string") return;
+  resRoot = dir;
+  resRootLabel.textContent = dir;
+  resFiles.replaceChildren();
+  resViewer?.dispose();
+  resViewer = null;
+  resViewer3d.replaceChildren();
+  resViewerToolbar.hidden = true;
+  try {
+    const dirs = await invoke<ModelDir[]>("list_model_dirs", { root: resRoot });
+    renderResDirs(dirs);
+  } catch (err) {
+    resDirs.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
+  }
+});
+
+// ------------------------------------------------------------------------------------
 
 pickButton.addEventListener("click", async () => {
   const dir = await open({ directory: true, multiple: false, title: "pasta com os .bsp" });

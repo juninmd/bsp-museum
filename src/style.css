@@ -637,3 +637,100 @@ h3 {
 .loading.error {
   color: var(--crit);
 }
+
+/* ---------- Recursos (visualizador avulso de .mdl) ---------- */
+.nav-view {
+  flex-shrink: 0;
+}
+
+.resources {
+  padding: 1rem;
+}
+
+.res-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.res-toolbar .dim {
+  color: var(--dim);
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.res-layout {
+  display: grid;
+  grid-template-columns: 220px 220px 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.res-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.res-item {
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.82rem;
+  color: var(--text);
+}
+
+.res-item.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.res-viewer-wrap {
+  min-width: 0;
+}
+
+.res-viewer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--dim);
+}
+
+.res-viewer-toolbar[hidden] {
+  display: none;
+}
+
+.chk-seq {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.res-viewer3d {
+  height: 70vh;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0a0e14;
+  position: relative;
+}
+
+.res-viewer3d canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 900px) {
+  .res-layout {
+    grid-template-columns: 1fr;
+  }
+}

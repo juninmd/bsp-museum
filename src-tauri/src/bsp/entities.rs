@@ -52,6 +52,17 @@ pub fn origin_of(entity: &Entity) -> Option<[f32; 3]> {
     Some([parts.next()??, parts.next()??, parts.next()??])
 }
 
+/// `"angles"` da entidade: `pitch yaw roll`, em graus. Ausente ou malformado
+/// vira `[0, 0, 0]` (sem rotação) em vez de descartar a entidade inteira.
+pub fn angles_of(entity: &Entity) -> [f32; 3] {
+    let Some(raw) = entity.get("angles") else { return [0.0, 0.0, 0.0] };
+    let mut parts = raw.split_whitespace().map(|p| p.parse::<f32>().ok());
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(Some(p)), Some(Some(y)), Some(Some(r))) => [p, y, r],
+        _ => [0.0, 0.0, 0.0],
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GameMode {
@@ -107,6 +118,19 @@ pub struct SpawnPoint {
     pub position: [f32; 3],
 }
 
+/// Entidade que aponta para um `.mdl` (props parados: `cycler`, `monster_generic`,
+/// itens/armas que o mapper posicionou à mão) — só entra aqui quando o BSP já
+/// declara a chave `model` explicitamente; o motor injeta modelo por conta
+/// própria em muitas outras (armas coletáveis, jogadores), e esses casos não
+/// têm como ser resolvidos só com o que está no BSP.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelInstance {
+    pub classname: String,
+    pub model: String,
+    pub origin: [f32; 3],
+    pub angles: [f32; 3],
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct EntitySummary {
     /// "message" do worldspawn — o título que o mapper deu
@@ -127,6 +151,8 @@ pub struct EntitySummary {
     pub vip_safety: usize,
     pub escape_zones: usize,
     pub mode_by_entities: GameMode,
+    /// entidades com `model` explícito terminando em `.mdl`
+    pub model_instances: Vec<ModelInstance>,
 }
 
 fn count_of(hist: &BTreeMap<String, usize>, class: &str) -> usize {
@@ -153,6 +179,7 @@ pub fn summarize(entities: &[Entity]) -> EntitySummary {
     let mut title = None;
     let mut sky = None;
     let mut wads = Vec::new();
+    let mut model_instances = Vec::new();
 
     for entity in entities {
         let class = entity.get("classname").cloned().unwrap_or_default();
@@ -160,6 +187,17 @@ pub fn summarize(entities: &[Entity]) -> EntitySummary {
             continue;
         }
         *hist.entry(class.clone()).or_insert(0) += 1;
+
+        if let Some(model) = entity.get("model") {
+            if model.to_ascii_lowercase().ends_with(".mdl") {
+                model_instances.push(ModelInstance {
+                    classname: class.clone(),
+                    model: model.clone(),
+                    origin: origin_of(entity).unwrap_or([0.0, 0.0, 0.0]),
+                    angles: angles_of(entity),
+                });
+            }
+        }
 
         if class == "worldspawn" {
             title = entity.get("message").filter(|m| !m.trim().is_empty()).cloned();
@@ -231,6 +269,7 @@ pub fn summarize(entities: &[Entity]) -> EntitySummary {
         vip_safety,
         escape_zones,
         mode_by_entities,
+        model_instances,
     }
 }
 

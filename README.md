@@ -99,14 +99,17 @@ num pedido de correção ao mapper.
 src-tauri/src/
   bsp/reader.rs     cursor little-endian com limites checados (nada de panic em arquivo torto)
   bsp/mod.rs        header + lumps: vértices, arestas, surfedges, faces, texinfo (vecs), texturas; e a decodificação de pixels (mip0 + paleta -> PNG)
-  bsp/entities.rs   parser do lump de texto + resumo (spawns, WADs, skyname, modo pelas entidades)
-  bsp/wad.rs        abre os `.wad` declarados pelo mapa e resolve o pixel de textura por nome
+  bsp/entities.rs   parser do lump de texto + resumo (spawns, WADs, skyname, modo pelas entidades, instâncias de .mdl)
+  bsp/palette.rs    paleta indexada (8bpp + 256 cores) -> RGBA, compartilhada por BSP/WAD/.mdl
+  bsp/wad.rs        abre os `.wad`/`.mdl` declarados pelo mapa e resolve o pixel/arquivo por nome
   bsp/sky.rs        decodifica os 6 lados do céu (TGA/BMP de gfx/env) e monta a caixa do skybox
   bsp/render.rs     planta baixa em SVG                    ← puro, sem I/O
-  catalog.rs        varredura, diagnóstico, montagem do detalhe e da malha 3D (triângulos + UV)
+  mdl/mod.rs        parser de modelo `.mdl` (GoldSrc studiomodel v10) — pose de repouso
+  catalog.rs        varredura, diagnóstico, montagem do detalhe, da malha 3D e do visualizador avulso de .mdl
   main.rs           comandos Tauri, cache e settings
 src/                frontend (Vite + TS puro)
   viewer3d.ts       cena Three.js: orbit, cor por altura ou textura real, skybox
+  resources.ts      visualizador avulso de .mdl — reusa a mesma cena de viewer3d.ts
 ```
 
 Duas decisões que valem explicação:
@@ -133,6 +136,27 @@ Faces com textura `aaatrigger`, `clip`, `null`, `origin`, `hint`, `skip` e `sky`
 invisíveis e **não entram na planta** — sem esse filtro, o desenho vira um borrão de caixas de
 clip.
 
+O índice `255` da paleta de 256 cores só é buraco (transparência) em textura cujo nome começa com
+`{` — grade, cerca, vidro (convenção herdada do Quake). Numa textura comum o `255` é só mais uma
+cor: tratá-lo sempre como buraco furava pixels que não deveriam sumir. Modelo `.mdl` usa a mesma
+paleta, mas decide a transparência por uma *flag* da textura (`STUDIO_NF_MASKED`), não pelo nome.
+
+## Modelos `.mdl` (props e o visualizador avulso)
+
+Entidade do BSP com `model` terminando em `.mdl` (`cycler`, `monster_generic`, itens/armas
+posicionados à mão) entra na vista 3D do mapa junto com o brush — sem controle novo, o toggle
+"texturizado" já existente liga tudo junto. Modelo referenciado que não existe no disco é ignorado
+em silêncio; o mapa continua abrindo normalmente.
+
+A aba **Recursos** (ao lado da galeria de mapas) navega as pastas do mod (`models/player`,
+`models/weapons`, `models/`) e abre qualquer `.mdl` isolado — jogador, arma, prop — fora do
+contexto de um mapa específico.
+
+O parser decodifica só a **pose de repouso** (bind pose): a hierarquia de bones é composta a
+partir dos valores fixos do arquivo, sem aplicar nenhuma sequência de animação. O nome de cada
+sequência aparece como metadado no visualizador avulso, mas trocar a sequência selecionada não
+muda a pose desenhada nesta versão — decodificar a animação de verdade fica pro backlog.
+
 ## Testes
 
 ```bash
@@ -151,5 +175,13 @@ panic), e cada regra do diagnóstico.
 - A vista 3D mostra as texturas embutidas no BSP **e** as dos WADs, mas precisa que os `.wad`
   estejam na pasta do mod (mesma de onde o mapa foi aberto) e que o `skyname` exista em
   `gfx/env`. Sem isso, entra cor neutra / domo de reserva.
-- Não renderiza modelos (`.mdl`) nem sprites; brush entities aparecem, props não.
+- `.mdl` renderiza só a pose de repouso (sem animação/sequência) e só a família base de skins —
+  modelo de jogador com skin alternativa de time não troca de cor. Sprites de partícula (`.spr`)
+  continuam fora do escopo.
+- A composição da rotação por bone (hierarquia do `.mdl`) não foi validada contra um arquivo real
+  do jogo neste ciclo — se um modelo com mais de um bone sair torto, é o primeiro lugar a revisar
+  (`src-tauri/src/mdl/mod.rs`, função `rotation_matrix`).
+- Só entram na vista 3D do mapa entidades com `model` **explícito** no BSP — armas/itens que o
+  jogo injeta por conta própria (sem essa chave) não têm como ser resolvidos só com o que está no
+  `.bsp`.
 - Não valida WAD de verdade (não abre o arquivo `.wad` quando não declarado).

@@ -609,6 +609,31 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
         }
     }
 
+    // Props: entidades com `.mdl` explícito no BSP (cycler, monster_generic
+    // etc.) entram nos mesmos arrays da malha do brush — sem controle
+    // separado na UI, o toggle "texturizado" que já existe liga tudo junto.
+    // Arquivo `.mdl` ausente ou corrompido é pulado em silêncio: não pode
+    // derrubar a leitura do mapa inteiro por causa de um prop.
+    let mod_dir = wad::mod_dir_of(path);
+    for inst in &ents.model_instances {
+        let Some(model_path) = wad::find_asset(&mod_dir, &inst.model) else { continue };
+        let Ok(model_bytes) = std::fs::read(&model_path) else { continue };
+        let Ok(prop) = crate::mdl::parse(&model_bytes) else { continue };
+
+        let base_tex = textures.len() as u32;
+        for t in &prop.textures {
+            textures.push(MeshTexture { name: t.name.clone(), png: Some(t.png.clone()) });
+        }
+        let place = crate::mdl::entity_transform(inst.origin, inst.angles);
+        for v in prop.positions.chunks_exact(3) {
+            let world = place([v[0], v[1], v[2]]);
+            positions.extend_from_slice(&world);
+        }
+        uvs.extend_from_slice(&prop.uvs);
+        texindex.extend(prop.texindex.iter().map(|t| base_tex + t));
+        triangles += prop.texindex.len();
+    }
+
     Ok(MeshDetail {
         positions,
         uvs,
@@ -620,5 +645,96 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
         wad_textures,
         triangles,
         skipped,
+    })
+}
+
+// ------------------------------------------------------------- visualizador avulso
+
+/// Pasta com `.mdl` (recursiva, agrupada pela subpasta imediata) — a árvore
+/// que o visualizador avulso navega (`models/player`, `models/weapons`, a
+/// raiz de `models/` etc.), sem depender de um `.bsp` aberto.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelDir {
+    /// caminho relativo à raiz escolhida (`.` pra a própria raiz)
+    pub name: String,
+    pub path: String,
+    pub count: usize,
+}
+
+fn find_mdl_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("mdl")) {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Agrupa os `.mdl` encontrados sob `root` pela pasta imediata que os contém.
+pub fn list_model_dirs(root: &Path) -> Vec<ModelDir> {
+    let mut counts: HashMap<PathBuf, usize> = HashMap::new();
+    for file in find_mdl_files(root) {
+        if let Some(parent) = file.parent() {
+            *counts.entry(parent.to_path_buf()).or_insert(0) += 1;
+        }
+    }
+    let mut out: Vec<ModelDir> = counts
+        .into_iter()
+        .map(|(path, count)| {
+            let name = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
+            ModelDir { name: if name.is_empty() { ".".to_string() } else { name }, path: path.to_string_lossy().to_string(), count }
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// `.mdl` diretamente dentro de `dir` (não recursivo — cada `ModelDir` já é
+/// uma pasta folha da árvore acima).
+pub fn list_models(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut out: Vec<String> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("mdl")))
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+    out.sort();
+    out
+}
+
+/// Modelo `.mdl` isolado, decodificado pro frontend — mesma malha não-indexada
+/// de `MeshDetail`, mais os nomes de sequência (metadado, ver `mdl` module).
+#[derive(Debug, Clone, Serialize)]
+pub struct MdlSummary {
+    pub positions: Vec<f32>,
+    pub uvs: Vec<f32>,
+    pub texindex: Vec<u32>,
+    pub textures: Vec<MeshTexture>,
+    pub sequences: Vec<String>,
+}
+
+pub fn load_model(path: &Path) -> Result<MdlSummary, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("não leu o arquivo: {e}"))?;
+    let model = crate::mdl::parse(&bytes).map_err(|e| e.to_string())?;
+    Ok(MdlSummary {
+        positions: model.positions,
+        uvs: model.uvs,
+        texindex: model.texindex,
+        textures: model
+            .textures
+            .into_iter()
+            .map(|t| MeshTexture { name: t.name, png: Some(t.png) })
+            .collect(),
+        sequences: model.sequences,
     })
 }

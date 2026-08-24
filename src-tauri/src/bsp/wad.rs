@@ -6,6 +6,7 @@
 //! resolve o nome de textura em PNG — mesmos mip/paleta, só muda o formato do
 //! container (WAD em vez de lump de BSP).
 
+use super::palette;
 use super::reader::Cursor;
 use super::rgba_png;
 use std::collections::{BTreeSet, HashMap};
@@ -25,12 +26,33 @@ struct Wad {
     index: HashMap<String, (usize, usize)>,
 }
 
+/// Pasta do mod a partir do caminho do `.bsp` (`<mod>/maps/mapa.bsp` -> `<mod>`).
+/// É a raiz de onde `.wad` e `models/*.mdl` são resolvidos.
+pub fn mod_dir_of(map_path: &Path) -> PathBuf {
+    map_path.parent().and_then(|p| p.parent()).unwrap_or_else(|| Path::new(".")).to_path_buf()
+}
+
+/// Acha um arquivo (WAD, `.mdl`, qualquer coisa) na pasta do mod, ou no `valve/`
+/// irmão dela quando o mod é `cstrike` e o recurso é herdado do Half-Life base.
+pub fn find_asset(mod_dir: &Path, rel_path: &str) -> Option<PathBuf> {
+    let in_mod = mod_dir.join(rel_path);
+    if in_mod.is_file() {
+        return Some(in_mod);
+    }
+    if let Some(game) = mod_dir.parent() {
+        let in_valve = game.join("valve").join(rel_path);
+        if in_valve.is_file() {
+            return Some(in_valve);
+        }
+    }
+    None
+}
+
 impl WadSet {
     /// Monta o conjunto a partir da pasta do mapa e dos WADs que o worldspawn
     /// declara. Sempre inclui `cstrike.wad` e `valve/halflife.wad` como reforço.
     pub fn for_map(map_path: &Path, declared: &[String]) -> Self {
-        let mod_dir =
-            map_path.parent().and_then(|p| p.parent()).unwrap_or_else(|| Path::new("."));
+        let mod_dir = mod_dir_of(map_path);
         let mut names: Vec<String> = declared.to_vec();
         for fallback in ["cstrike.wad", "halflife.wad"] {
             names.push(fallback.to_string());
@@ -39,7 +61,7 @@ impl WadSet {
         let mut paths: Vec<PathBuf> = Vec::new();
         let mut seen: BTreeSet<String> = BTreeSet::new();
         for n in &names {
-            if let Some(p) = find_wad(mod_dir, n) {
+            if let Some(p) = find_asset(&mod_dir, n) {
                 if seen.insert(p.display().to_string()) {
                     paths.push(p);
                 }
@@ -72,21 +94,6 @@ impl WadSet {
         self.cache.insert(key, found.clone());
         found
     }
-}
-
-fn find_wad(mod_dir: &Path, name: &str) -> Option<PathBuf> {
-    let in_mod = mod_dir.join(name);
-    if in_mod.is_file() {
-        return Some(in_mod);
-    }
-    // Irmão da pasta do mod (`Half-Life/valve/<wad>` quando o mod é `cstrike`).
-    if let Some(game) = mod_dir.parent() {
-        let in_valve = game.join("valve").join(name);
-        if in_valve.is_file() {
-            return Some(in_valve);
-        }
-    }
-    None
 }
 
 /// Lê o cabeçalho do WAD e indexa os lumps de textura por nome.
@@ -131,7 +138,7 @@ fn texture_image(lump: &[u8]) -> Option<(String, u32, u32)> {
         return None;
     }
     let mut mip = Cursor::new(lump);
-    mip.fixed_str(16).ok()?; // name — só para avançar
+    let name = mip.fixed_str(16).ok()?;
     let width = mip.u32().ok()?;
     let height = mip.u32().ok()?;
     let off0 = mip.u32().ok()? as usize;
@@ -144,15 +151,67 @@ fn texture_image(lump: &[u8]) -> Option<(String, u32, u32)> {
     let end = off0.checked_add(need)?;
     let pixels = lump.get(off0..end)?;
 
-    let palette = &lump[lump.len() - 768..];
-    let mut rgba = Vec::with_capacity(need * 4);
-    for &idx in pixels {
-        let p = (idx as usize) * 3;
-        let r = *palette.get(p)?;
-        let g = *palette.get(p + 1)?;
-        let b = *palette.get(p + 2)?;
-        let a = if idx == 255 { 0 } else { 255 };
-        rgba.extend_from_slice(&[r, g, b, a]);
-    }
+    let pal = &lump[lump.len() - 768..];
+    // Mesma convenção do BSP: só textura `{`-prefixada fura no índice 255.
+    let rgba = palette::decode_indexed(pixels, pal, name.starts_with('{'))?;
     Some((rgba_png(w, h, &rgba)?, width, height))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// miptex de 1x1 pixel + paleta de 256 cores, mesmo layout de um lump `'C'` de WAD.
+    fn miptex_lump(name: &str, pixel_idx: u8, idx255_rgb: [u8; 3]) -> Vec<u8> {
+        let mut raw_name = [0u8; 16];
+        let bytes = name.as_bytes();
+        raw_name[..bytes.len().min(15)].copy_from_slice(&bytes[..bytes.len().min(15)]);
+        let mut out = Vec::new();
+        out.extend_from_slice(&raw_name);
+        out.extend_from_slice(&1u32.to_le_bytes()); // width
+        out.extend_from_slice(&1u32.to_le_bytes()); // height
+        out.extend_from_slice(&40u32.to_le_bytes()); // offset do mip0
+        out.extend_from_slice(&[0u8; 12]); // offsets[1..4]
+        out.push(pixel_idx);
+        let mut palette = vec![0u8; 768];
+        palette[765..768].copy_from_slice(&idx255_rgb);
+        out.extend_from_slice(&palette);
+        out
+    }
+
+    /// Só o bastante do PNG que `rgba_png` gera (RGBA 8-bit, filtro "None") pra
+    /// checar o canal alfa do único pixel.
+    fn decode_png_alpha(data_url: &str) -> u8 {
+        use base64::Engine as _;
+        let b64 = data_url.strip_prefix("data:image/png;base64,").expect("data URL de PNG");
+        let png = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        let mut pos = 8usize;
+        let mut idat = Vec::new();
+        while pos + 8 <= png.len() {
+            let len = u32::from_be_bytes(png[pos..pos + 4].try_into().unwrap()) as usize;
+            let kind = &png[pos + 4..pos + 8];
+            if kind == b"IDAT" {
+                idat.extend_from_slice(&png[pos + 8..pos + 8 + len]);
+            }
+            pos += 8 + len + 4;
+        }
+        let mut scan = Vec::new();
+        std::io::Read::read_to_end(&mut flate2::read::ZlibDecoder::new(&idat[..]), &mut scan).unwrap();
+        scan[1 + 3] // byte de filtro + R,G,B,A do único pixel
+    }
+
+    #[test]
+    fn textura_de_wad_comum_nao_fura_no_indice_255() {
+        let lump = miptex_lump("wall01", 255, [10, 20, 30]);
+        let (png, w, h) = texture_image(&lump).expect("decodifica");
+        assert_eq!((w, h), (1, 1));
+        assert_eq!(decode_png_alpha(&png), 255);
+    }
+
+    #[test]
+    fn textura_de_wad_chave_fura_no_indice_255() {
+        let lump = miptex_lump("{cerca", 255, [10, 20, 30]);
+        let (png, _, _) = texture_image(&lump).expect("decodifica");
+        assert_eq!(decode_png_alpha(&png), 0);
+    }
 }

@@ -7,7 +7,7 @@
 use crate::bsp::entities::{self, GameMode};
 use crate::bsp::reader::BspError;
 use crate::bsp::render::{self, RenderOptions};
-use crate::bsp::{Bsp, GOLDSRC_VERSION, LUMP_COUNT};
+use crate::bsp::{Bsp, Lump, GOLDSRC_VERSION, LUMP_COUNT};
 use crate::catalog;
 
 const LUMP_ENTITIES: usize = 0;
@@ -423,6 +423,58 @@ fn resume_worldspawn_e_spawns() {
 }
 
 #[test]
+fn le_angulos_como_vetor() {
+    let ents = entities::parse("{\"angles\" \"0 90 0\"}");
+    assert_eq!(entities::angles_of(&ents[0]), [0.0, 90.0, 0.0]);
+}
+
+#[test]
+fn sem_angulos_vira_zero_em_vez_de_descartar_a_entidade() {
+    let ents = entities::parse("{\"classname\" \"cycler\"}");
+    assert_eq!(entities::angles_of(&ents[0]), [0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn angulos_malformados_viram_zero() {
+    let ents = entities::parse("{\"angles\" \"0 abc 0\"}");
+    assert_eq!(entities::angles_of(&ents[0]), [0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn entidade_com_model_mdl_vira_instancia() {
+    let text = r#"{
+"classname" "cycler"
+"model" "models/barney.mdl"
+"origin" "16 32 8"
+"angles" "0 180 0"
+}
+{
+"classname" "info_player_start"
+"origin" "0 0 0"
+}"#;
+    let summary = entities::summarize(&entities::parse(text));
+    assert_eq!(summary.model_instances.len(), 1);
+    let inst = &summary.model_instances[0];
+    assert_eq!(inst.classname, "cycler");
+    assert_eq!(inst.model, "models/barney.mdl");
+    assert_eq!(inst.origin, [16.0, 32.0, 8.0]);
+    assert_eq!(inst.angles, [0.0, 180.0, 0.0]);
+}
+
+#[test]
+fn entidade_sem_model_nao_vira_instancia() {
+    let summary = entities::summarize(&entities::parse(SIMPLE_ENTITIES));
+    assert!(summary.model_instances.is_empty());
+}
+
+#[test]
+fn model_que_nao_termina_em_mdl_e_ignorado() {
+    let text = r#"{"classname" "func_wall" "model" "*3"}"#;
+    let summary = entities::summarize(&entities::parse(text));
+    assert!(summary.model_instances.is_empty(), "modelo de brush (*N) não é .mdl");
+}
+
+#[test]
 fn wad_perde_o_caminho_de_quem_compilou() {
     let summary = entities::summarize(&entities::parse(SIMPLE_ENTITIES));
     assert_eq!(summary.wads, vec!["cstrike.wad", "halflife.wad"]);
@@ -567,6 +619,128 @@ fn teto_nunca_entra_na_planta() {
     assert_eq!(render::top_down(&bsp, &[], RenderOptions::detail()).polygons, 0);
 }
 
+// ---------------------------------------------------------------- pixels de textura
+
+/// Monta o lump de texturas cru (tabela + 1 miptex com pixels reais + paleta):
+/// o suficiente pra chamar `bsp::texture_image` sem depender do `BspBuilder`
+/// (que não grava pixel nenhum, só o cabeçalho da tabela).
+fn texture_lump_with_pixels(name: &str, w: u32, h: u32, pixel_idx: u8, idx255_rgb: [u8; 3]) -> Vec<u8> {
+    let mut raw_name = [0u8; 16];
+    let bytes = name.as_bytes();
+    raw_name[..bytes.len().min(15)].copy_from_slice(&bytes[..bytes.len().min(15)]);
+
+    let mut body = Vec::new();
+    body.extend_from_slice(&raw_name);
+    body.extend_from_slice(&w.to_le_bytes());
+    body.extend_from_slice(&h.to_le_bytes());
+    body.extend_from_slice(&40u32.to_le_bytes()); // mip0 logo após o miptex_t (16+4*4+4*4)
+    body.extend_from_slice(&[0u8; 12]); // offsets[1..4], não usados
+    body.extend_from_slice(&vec![pixel_idx; (w * h) as usize]);
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&1u32.to_le_bytes()); // count
+    out.extend_from_slice(&8i32.to_le_bytes()); // offset da única entrada (4 + 1*4)
+    out.extend_from_slice(&body);
+
+    let mut palette = vec![0u8; 768];
+    palette[765..768].copy_from_slice(&idx255_rgb);
+    out.extend_from_slice(&palette);
+    out
+}
+
+/// Descompacta o `data:image/png;base64,...` de volta em pixels RGBA planos.
+/// Só entende o que `png_encode` gera (8-bit RGBA, filtro "None" em toda linha)
+/// — não é um decoder de PNG geral, só o bastante pra provar o alpha do pixel.
+fn decode_test_png(data_url: &str) -> Vec<u8> {
+    let b64 = data_url.strip_prefix("data:image/png;base64,").expect("data URL de PNG");
+    let png = base64_decode(b64);
+    let mut pos = 8usize; // assinatura PNG
+    let mut width = 0u32;
+    let mut height = 0u32;
+    let mut idat = Vec::new();
+    while pos + 8 <= png.len() {
+        let len = u32::from_be_bytes(png[pos..pos + 4].try_into().unwrap()) as usize;
+        let kind = &png[pos + 4..pos + 8];
+        let data = &png[pos + 8..pos + 8 + len];
+        match kind {
+            b"IHDR" => {
+                width = u32::from_be_bytes(data[0..4].try_into().unwrap());
+                height = u32::from_be_bytes(data[4..8].try_into().unwrap());
+            }
+            b"IDAT" => idat.extend_from_slice(data),
+            b"IEND" => break,
+            _ => {}
+        }
+        pos += 8 + len + 4; // + CRC
+    }
+    let mut scan = Vec::new();
+    std::io::Read::read_to_end(&mut flate2::read::ZlibDecoder::new(&idat[..]), &mut scan).unwrap();
+    let stride = width as usize * 4;
+    let mut rgba = Vec::with_capacity(stride * height as usize);
+    for row in scan.chunks(stride + 1) {
+        rgba.extend_from_slice(&row[1..]); // pula o byte de filtro (sempre 0)
+    }
+    rgba
+}
+
+#[test]
+fn textura_comum_nao_fura_no_indice_255() {
+    let raw = texture_lump_with_pixels("wall01", 1, 1, 255, [200, 10, 10]);
+    let lump = Lump { offset: 0, length: raw.len() };
+    let img = crate::bsp::texture_image(&raw, lump, 0).expect("decodifica");
+    let rgba = decode_test_png(&img.png);
+    assert_eq!(rgba, vec![200, 10, 10, 255], "sem `{{`, o índice 255 é só mais uma cor");
+}
+
+/// Mesmo layout de `texture_lump_with_pixels`, mas com N texturas na tabela —
+/// pra provar que `texture_image(texindex)` pega a entrada certa e não a
+/// seguinte (bug real corrigido junto do gate de transparência).
+fn texture_lump_multi(names_and_pixels: &[(&str, u8)]) -> Vec<u8> {
+    let count = names_and_pixels.len();
+    let table_size = 4 + count * 4;
+    let mut bodies = Vec::new();
+    let mut offsets = Vec::new();
+    for (name, pixel_idx) in names_and_pixels {
+        offsets.push((table_size + bodies.len()) as i32);
+        let mut raw_name = [0u8; 16];
+        let bytes = name.as_bytes();
+        raw_name[..bytes.len().min(15)].copy_from_slice(&bytes[..bytes.len().min(15)]);
+        bodies.extend_from_slice(&raw_name);
+        bodies.extend_from_slice(&1u32.to_le_bytes()); // width
+        bodies.extend_from_slice(&1u32.to_le_bytes()); // height
+        bodies.extend_from_slice(&40u32.to_le_bytes()); // mip0
+        bodies.extend_from_slice(&[0u8; 12]);
+        bodies.push(*pixel_idx);
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(&(count as u32).to_le_bytes());
+    for o in offsets {
+        out.extend_from_slice(&o.to_le_bytes());
+    }
+    out.extend_from_slice(&bodies);
+    out.extend_from_slice(&[0u8; 768]); // paleta neutra (não é o que este teste checa)
+    out
+}
+
+#[test]
+fn texture_image_pega_a_entrada_certa_da_tabela_nao_a_seguinte() {
+    let raw = texture_lump_multi(&[("wall01", 10), ("wall02", 20), ("wall03", 30)]);
+    let lump = Lump { offset: 0, length: raw.len() };
+    for (i, expected_name) in ["wall01", "wall02", "wall03"].into_iter().enumerate() {
+        let img = crate::bsp::texture_image(&raw, lump, i).unwrap_or_else(|| panic!("textura {i}"));
+        assert_eq!(img.name, expected_name, "texindex {i} devolveu a textura errada");
+    }
+}
+
+#[test]
+fn textura_chave_fura_no_indice_255() {
+    let raw = texture_lump_with_pixels("{grade", 1, 1, 255, [200, 10, 10]);
+    let lump = Lump { offset: 0, length: raw.len() };
+    let img = crate::bsp::texture_image(&raw, lump, 0).expect("decodifica");
+    let rgba = decode_test_png(&img.png);
+    assert_eq!(rgba, vec![200, 10, 10, 0], "com `{{`, o índice 255 vira buraco");
+}
+
 // ---------------------------------------------------------------- catálogo
 
 fn write_temp(name: &str, data: &[u8]) -> std::path::PathBuf {
@@ -609,6 +783,105 @@ fn lump_de_iluminacao_vazio_marca_fullbright() {
         .build();
     let path = write_temp("fullbright.bsp", &data);
     assert!(catalog::summarize_file(&path).fullbright);
+}
+
+#[test]
+fn mesh_inclui_prop_de_entidade_com_model_mdl() {
+    // Estrutura de mod: <root>/maps/de_teste.bsp e <root>/models/prop.mdl —
+    // mesma raiz que catalog::mesh usa pra resolver .mdl (wad::mod_dir_of).
+    let root = std::env::temp_dir().join("bsp-museum-tests-mdl");
+    let maps = root.join("maps");
+    let models = root.join("models");
+    std::fs::create_dir_all(&maps).unwrap();
+    std::fs::create_dir_all(&models).unwrap();
+    std::fs::write(models.join("prop.mdl"), crate::mdl::synthetic_mdl()).unwrap();
+
+    let text = r#"{
+"classname" "worldspawn"
+}
+{
+"classname" "cycler"
+"model" "models/prop.mdl"
+"origin" "0 0 0"
+}"#;
+    let data = BspBuilder::new()
+        .texture("concrete", true)
+        .floor(0.0, 0.0, 64.0, 64.0, 0.0, 0)
+        .model([0.0; 3], [64.0, 64.0, 32.0])
+        .entities(text)
+        .build();
+    let path = maps.join("de_teste.bsp");
+    std::fs::write(&path, &data).unwrap();
+
+    let mesh = catalog::mesh(&path).expect("malha com prop");
+    // 2 triângulos do chão (fan de 4 vértices) + 1 do prop.
+    assert_eq!(mesh.triangles, 3, "faltou o triângulo do prop na malha");
+    assert!(
+        mesh.textures.iter().any(|t| t.name == "skin1"),
+        "textura do .mdl não entrou na lista de texturas da malha"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn mesh_ignora_mdl_ausente_sem_quebrar_o_mapa() {
+    let root = std::env::temp_dir().join("bsp-museum-tests-mdl-ausente");
+    let maps = root.join("maps");
+    std::fs::create_dir_all(&maps).unwrap();
+
+    let text = r#"{
+"classname" "worldspawn"
+}
+{
+"classname" "cycler"
+"model" "models/nao_existe.mdl"
+"origin" "0 0 0"
+}"#;
+    let data = BspBuilder::new()
+        .texture("concrete", true)
+        .floor(0.0, 0.0, 64.0, 64.0, 0.0, 0)
+        .model([0.0; 3], [64.0, 64.0, 32.0])
+        .entities(text)
+        .build();
+    let path = maps.join("de_teste.bsp");
+    std::fs::write(&path, &data).unwrap();
+
+    let mesh = catalog::mesh(&path).expect("mapa abre mesmo com .mdl ausente");
+    assert_eq!(mesh.triangles, 2, "só o chão, sem o prop que não existe no disco");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn list_model_dirs_agrupa_por_pasta_e_ignora_lixo() {
+    let root = std::env::temp_dir().join("bsp-museum-tests-model-dirs");
+    let player = root.join("models").join("player");
+    let weapons = root.join("models").join("weapons");
+    std::fs::create_dir_all(&player).unwrap();
+    std::fs::create_dir_all(&weapons).unwrap();
+    std::fs::write(player.join("terror.mdl"), b"x").unwrap();
+    std::fs::write(player.join("leet.mdl"), b"x").unwrap();
+    std::fs::write(weapons.join("v_ak47.mdl"), b"x").unwrap();
+    std::fs::write(weapons.join("readme.txt"), b"nao e modelo").unwrap();
+
+    let dirs = catalog::list_model_dirs(&root);
+    let player_dir = dirs.iter().find(|d| d.path == player.to_string_lossy()).expect("pasta player");
+    assert_eq!(player_dir.count, 2);
+    let weapons_dir = dirs.iter().find(|d| d.path == weapons.to_string_lossy()).expect("pasta weapons");
+    assert_eq!(weapons_dir.count, 1);
+
+    let models = catalog::list_models(&weapons);
+    assert_eq!(models.len(), 1);
+    assert!(models[0].ends_with("v_ak47.mdl"));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn load_model_devolve_erro_legivel_pra_arquivo_que_nao_e_mdl() {
+    let path = write_temp("nao-e-modelo.mdl", b"lixo, nao e um mdl valido");
+    assert!(catalog::load_model(&path).is_err());
 }
 
 #[test]
