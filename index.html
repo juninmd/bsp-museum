@@ -12,7 +12,11 @@
         <span class="mark"></span>
         <h1>bsp-museum</h1>
       </div>
-      <div class="controls">
+      <nav class="seg nav-view" role="tablist" aria-label="seção">
+        <button id="nav-maps" class="active" aria-pressed="true">Mapas</button>
+        <button id="nav-resources" aria-pressed="false">Recursos</button>
+      </nav>
+      <div class="controls" id="map-controls">
         <label class="sr-only" for="search">filtrar mapas</label>
         <input
           id="search"
@@ -44,6 +48,27 @@
     <div id="status" class="status" role="status"></div>
 
     <main id="gallery" class="gallery" aria-live="polite"></main>
+
+    <section id="resources" class="resources" hidden aria-live="polite">
+      <div class="res-toolbar">
+        <button id="res-pick">escolher pasta do mod…</button>
+        <span id="res-root" class="dim"></span>
+      </div>
+      <div class="res-layout">
+        <div class="res-col" id="res-dirs" aria-label="pastas com modelos"></div>
+        <div class="res-col" id="res-files" aria-label="arquivos .mdl"></div>
+        <div class="res-viewer-wrap">
+          <div class="res-viewer-toolbar" id="res-viewer-toolbar" hidden>
+            <label class="chk-seq" title="a sequência é só metadado nesta versão — trocar não muda a pose desenhada">
+              sequência
+              <select id="res-sequence"></select>
+              <span class="hintc">(pose de repouso — animação ainda não decodificada)</span>
+            </label>
+          </div>
+          <div class="res-viewer3d" id="res-viewer3d"></div>
+        </div>
+      </div>
+    </section>
 
     <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-label="detalhes do mapa" hidden>
       <button id="close-drawer" class="close" aria-label="fechar">×</button>

@@ -87,6 +87,22 @@ export interface SkyBox {
   back: string;
 }
 
+export interface ModelDir {
+  name: string;
+  path: string;
+  count: number;
+}
+
+/** `.mdl` isolado (visualizador avulso) — mesma malha não-indexada do `MeshDetail`. */
+export interface MdlSummary {
+  positions: number[];
+  uvs: number[];
+  texindex: number[];
+  textures: MeshTexture[];
+  /** nomes das sequências — metadado; trocar não muda a pose desenhada nesta versão */
+  sequences: string[];
+}
+
 export interface MeshDetail {
   /** xyz por vértice, 9 floats por triângulo */
   positions: number[];
