@@ -42,6 +42,11 @@ export function mountModelViewer(container: HTMLElement, model: MdlSummary): Vie
     wad_textures: 0,
     triangles: model.texindex.length,
     skipped: 0,
+    lightmap: null,
+    lm_uvs: [],
+    tri_face: [],
+    pvs: null,
+    bsp_version: 30,
   };
   return mount3D(container, mesh, true);
 }

@@ -1,38 +1,44 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { buildChunks, toWorld, visibleIndices, type Chunk } from "./lib/geometry.ts";
+import { inputFromMesh } from "./lib/chunker.ts";
+import { Pvs } from "./lib/pvs.ts";
 import type { MeshDetail, SkyBox } from "./types.ts";
+
+export interface ViewerStats {
+  /** triângulos desenhados no último quadro */
+  drawn: number;
+  /** triângulos da malha inteira */
+  total: number;
+  /** folha do BSP em que a câmera está (-1 = sem árvore) */
+  leaf: number;
+  pvsActive: boolean;
+}
 
 export interface Viewer3D {
   setTextured(on: boolean): void;
   setTransparent(on: boolean): void;
+  /** liga/desliga a luz pré-calculada (lightmaps) no modo texturizado */
+  setLightmaps(on: boolean): void;
+  /** liga/desliga o corte por visibilidade (PVS) */
+  setPvs(on: boolean): void;
+  /** leva a câmera até um ponto (coordenadas do mapa, Z-up) e marca o lugar */
+  focusOn(position: [number, number, number]): void;
   enterFirstPerson(): void;
   exitFirstPerson(): void;
   setFullscreen(on: boolean): void;
+  onStats(listener: (s: ViewerStats) => void): void;
   dispose(): void;
 }
 
-/** vira Z-up (GoldSrc) em Y-up (Three.js): (x,y,z) -> (x, z, -y). */
-function toWorld(x: number, y: number, z: number): [number, number, number] {
-  return [x, z, -y];
+export interface Viewer3DOptions {
+  textured: boolean;
+  /** chunks já montados (no Web Worker); se ausente, monta aqui mesmo */
+  chunks?: Chunk[];
 }
 
-function clamp01(t: number): number {
-  return t < 0 ? 0 : t > 1 ? 1 : t;
-}
-
-/** Mesma paleta por altura da planta baixa: frio embaixo, quente no topo. */
-function heightRgb(t: number): [number, number, number] {
-  const low: [number, number, number] = [26, 42, 71];
-  const mid: [number, number, number] = [31, 122, 140];
-  const high: [number, number, number] = [242, 193, 78];
-  const lerp = (a: [number, number, number], b: [number, number, number], k: number): [number, number, number] => [
-    a[0] + (b[0] - a[0]) * k,
-    a[1] + (b[1] - a[1]) * k,
-    a[2] + (b[2] - a[2]) * k,
-  ];
-  const rgb = t < 0.5 ? lerp(low, mid, t * 2) : lerp(mid, high, (t - 0.5) * 2);
-  return rgb.map((v) => v / 255) as [number, number, number];
-}
+/** Lightmap do GoldSrc é "overbright": 128 é neutro, então a luz multiplica por 2. */
+const LIGHTMAP_INTENSITY = 2;
 
 function buildTextures(mesh: MeshDetail): (THREE.Texture | null)[] {
   return mesh.textures.map((t) => {
@@ -46,61 +52,28 @@ function buildTextures(mesh: MeshDetail): (THREE.Texture | null)[] {
   });
 }
 
-interface Bucket {
-  positions: number[];
-  uvs: number[];
-  colors: number[];
-  textureIndex: number;
-}
-
-/** Separa os triângulos por textura e gera uma malha + UV + cor por vértice. */
-function makeBuckets(mesh: MeshDetail): { buckets: Bucket[]; zMin: number; zMax: number } {
-  const zMin = mesh.bounds ? mesh.bounds.mins[2] : 0;
-  const zMax = mesh.bounds ? mesh.bounds.maxs[2] : 1;
-  const zRange = Math.max(1, zMax - zMin);
-
-  const order: number[] = [];
-  const seen = new Set<number>();
-  for (const tex of mesh.texindex) {
-    const id = tex;
-    if (!seen.has(id)) {
-      seen.add(id);
-      order.push(id);
-    }
-  }
-  const bucketOf = new Map<number, Bucket>();
-  for (const id of order) {
-    bucketOf.set(id, { positions: [], uvs: [], colors: [], textureIndex: id });
-  }
-
-  const flat = mesh.positions;
-  const uvFlat = mesh.uvs;
-  for (let tri = 0; tri < mesh.texindex.length; tri++) {
-    const b = bucketOf.get(mesh.texindex[tri]!);
-    if (!b) continue;
-    const p0 = tri * 9;
-    const u0 = tri * 6;
-    for (let v = 0; v < 3; v++) {
-      const x = flat[p0 + v * 3]!;
-      const y = flat[p0 + v * 3 + 1]!;
-      const z = flat[p0 + v * 3 + 2]!;
-      const [wx, wy, wz] = toWorld(x, y, z);
-      b.positions.push(wx, wy, wz);
-      b.uvs.push(uvFlat[u0 + v * 2]!, uvFlat[u0 + v * 2 + 1]!);
-      const rgb = heightRgb(clamp01((z - zMin) / zRange));
-      b.colors.push(rgb[0], rgb[1], rgb[2]);
-    }
-  }
-
-  return { buckets: order.map((id) => bucketOf.get(id)!), zMin, zMax };
+interface Entry {
+  mesh: THREE.Mesh;
+  chunk: Chunk;
+  /** índice dinâmico (PVS): só os triângulos visíveis */
+  indices: Uint32Array;
+  texMaterial: THREE.MeshBasicMaterial;
 }
 
 /**
  * Monta a cena 3D orbitável dentro de `container`.
- * `textured` liga as texturas reais do BSP; desligado mostra a cor por altura.
+ * `textured` liga as texturas reais; desligado mostra a cor por altura.
  */
-export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: boolean): Viewer3D {
-  const { buckets } = makeBuckets(mesh);
+export function mount3D(
+  container: HTMLElement,
+  mesh: MeshDetail,
+  options: boolean | Viewer3DOptions,
+): Viewer3D {
+  const opts: Viewer3DOptions = typeof options === "boolean" ? { textured: options } : options;
+  const chunks = opts.chunks ?? (() => {
+    const { input, cellSize } = inputFromMesh(mesh);
+    return buildChunks(input, cellSize);
+  })();
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -116,10 +89,9 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
   controls.dampingFactor = 0.08;
 
   // Luz ambiente alta + hemisférica: sem isso o chão (mais baixo, cor fria) vira
-  // um vulto escuro sobre o fundo escuro e some de vista.
+  // um vulto escuro sobre o fundo escuro e some de vista. Só afeta o modo "cor por altura".
   scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-  const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x33373d, 0.6);
-  scene.add(hemi);
+  scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x33373d, 0.6));
   const sun = new THREE.DirectionalLight(0xffffff, 0.9);
   sun.position.set(1, 2, 1.4);
   scene.add(sun);
@@ -136,27 +108,45 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
   });
 
   const textures = buildTextures(mesh);
-  const entries: { mesh: THREE.Mesh; texMaterial: THREE.MeshStandardMaterial }[] = [];
+  let lightmapTex: THREE.Texture | null = null;
+  if (mesh.lightmap && mesh.lm_uvs.length) {
+    lightmapTex = new THREE.TextureLoader().load(mesh.lightmap);
+    lightmapTex.colorSpace = THREE.SRGBColorSpace;
+    lightmapTex.channel = 1; // uv1
+    lightmapTex.minFilter = THREE.LinearFilter;
+    lightmapTex.magFilter = THREE.LinearFilter;
+    lightmapTex.generateMipmaps = false;
+  }
 
-  for (const bucket of buckets) {
+  const entries: Entry[] = [];
+  let totalTriangles = 0;
+  for (const chunk of chunks) {
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(bucket.positions, 3));
-    geometry.setAttribute("uv", new THREE.Float32BufferAttribute(bucket.uvs, 2));
-    geometry.setAttribute("color", new THREE.Float32BufferAttribute(bucket.colors, 3));
-    geometry.computeVertexNormals();
+    geometry.setAttribute("position", new THREE.BufferAttribute(chunk.positions, 3));
+    geometry.setAttribute("uv", new THREE.BufferAttribute(chunk.uvs, 2));
+    if (chunk.lmUvs.length) geometry.setAttribute("uv1", new THREE.BufferAttribute(chunk.lmUvs, 2));
+    geometry.setAttribute("color", new THREE.BufferAttribute(chunk.colors, 3));
+    const triCount = chunk.triFace.length;
+    totalTriangles += triCount;
+    const indices = new Uint32Array(triCount * 3);
+    visibleIndices(chunk.triFace, null, indices);
+    const index = new THREE.BufferAttribute(indices, 1);
+    index.setUsage(THREE.DynamicDrawUsage);
+    geometry.setIndex(index);
+    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(...chunk.center), chunk.radius);
 
-    const tex = bucket.textureIndex < textures.length ? textures[bucket.textureIndex] : undefined;
-    const texMaterial = new THREE.MeshStandardMaterial({
+    const tex = chunk.textureIndex < textures.length ? textures[chunk.textureIndex] : undefined;
+    const texMaterial = new THREE.MeshBasicMaterial({
       color: tex ? 0xffffff : 0x8b98a5,
-      roughness: 0.9,
-      metalness: 0,
       side: THREE.DoubleSide,
       map: tex ?? null,
+      lightMap: lightmapTex,
+      lightMapIntensity: LIGHTMAP_INTENSITY,
     });
 
     const meshObj = new THREE.Mesh(geometry, flatMaterial);
     scene.add(meshObj);
-    entries.push({ mesh: meshObj, texMaterial });
+    entries.push({ mesh: meshObj, chunk, indices, texMaterial });
   }
 
   // Spawns como esferas: azul CT, laranja T, verde resto.
@@ -189,6 +179,54 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
   // Céu: a caixa real do mapa (gfx/env) se existir; senão um domo gradiente.
   const sky = loadSky(center, maxDim, mesh.skybox);
   scene.add(sky);
+
+  // Marcador de "você está aqui" para o foco em entidade.
+  const marker = new THREE.Group();
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(1, 0.08, 8, 40),
+    new THREE.MeshBasicMaterial({ color: 0xf2c14e, depthTest: false, transparent: true }),
+  );
+  ring.rotation.x = Math.PI / 2;
+  const pin = new THREE.Mesh(
+    new THREE.ConeGeometry(0.35, 1.4, 12),
+    new THREE.MeshBasicMaterial({ color: 0xf2c14e, depthTest: false, transparent: true }),
+  );
+  pin.rotation.x = Math.PI;
+  pin.position.y = 1.6;
+  marker.add(ring, pin);
+  marker.visible = false;
+  marker.renderOrder = 10;
+  scene.add(marker);
+
+  // -------------------------------------------------------------------------
+  // PVS: só desenha o que as folhas visíveis a partir da câmera enxergam.
+  const pvs = mesh.pvs ? new Pvs(mesh.pvs) : null;
+  let pvsEnabled = pvs !== null;
+  let lastLeaf = -2;
+  let currentLeaf = -1;
+  let pvsActive = false;
+
+  const applyVisibility = (flags: Uint8Array | null) => {
+    const predicate = pvs?.predicate(flags) ?? null;
+    for (const e of entries) {
+      const n = visibleIndices(e.chunk.triFace, predicate, e.indices);
+      const geo = e.mesh.geometry;
+      geo.setDrawRange(0, n);
+      geo.index!.needsUpdate = true;
+      e.mesh.visible = n > 0;
+    }
+    pvsActive = flags !== null;
+  };
+
+  const refreshPvs = () => {
+    if (!pvs) return;
+    // câmera (Three, Y-up) -> mapa (GoldSrc, Z-up): (x, y, z) = (cx, -cz, cy)
+    const leaf = pvsEnabled ? pvs.leafAt(camera.position.x, -camera.position.z, camera.position.y) : -1;
+    currentLeaf = leaf;
+    if (leaf === lastLeaf) return;
+    lastLeaf = leaf;
+    applyVisibility(pvsEnabled && leaf >= 0 ? pvs.facesVisibleFrom(leaf) : null);
+  };
 
   // -------------------------------------------------------------------------
   // Estado do modo "primeira pessoa" (no-clip): mouse para olhar, WASD/fly.
@@ -297,6 +335,19 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
     return Math.max(2, Math.min(s[0], s[1], s[2]) / 40);
   }
 
+  function focusOn(position: [number, number, number]) {
+    const [x, y, z] = toWorld(position[0], position[1], position[2]);
+    const reach = Math.max(120, maxDim / 14);
+    if (mode === "fps") exitFirstPerson();
+    controls.target.set(x, y, z);
+    camera.position.set(x + reach * 0.9, y + reach * 0.7, z + reach * 0.9);
+    controls.update();
+    marker.position.set(x, y, z);
+    marker.scale.setScalar(Math.max(8, reach / 8));
+    marker.visible = true;
+    lastLeaf = -2; // reavalia o PVS a partir da nova posição
+  }
+
   const resize = () => {
     const w = container.clientWidth || 1;
     const h = container.clientHeight || 1;
@@ -308,6 +359,9 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
   const ro = new ResizeObserver(resize);
   ro.observe(container);
 
+  let statsListener: ((s: ViewerStats) => void) | null = null;
+  let lastStats = 0;
+
   let raf = 0;
   const animate = () => {
     raf = requestAnimationFrame(animate);
@@ -317,40 +371,62 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
     } else {
       controls.update();
     }
+    if (marker.visible) {
+      ring.rotation.z += dt * 1.5;
+      pin.position.y = 1.6 + Math.sin(performance.now() / 300) * 0.25;
+    }
+    refreshPvs();
     renderer.render(scene, camera);
+    const now = performance.now();
+    if (statsListener && now - lastStats > 400) {
+      lastStats = now;
+      statsListener({ drawn: renderer.info.render.triangles, total: totalTriangles, leaf: currentLeaf, pvsActive });
+    }
   };
   animate();
 
-  const applyMode = (on: boolean) => {
+  let texturedOn = opts.textured;
+  let lightmapsOn = true;
+  const refreshMaterials = () => {
     for (const e of entries) {
-      e.mesh.material = on ? e.texMaterial : flatMaterial;
-      if (on) e.texMaterial.needsUpdate = true;
+      e.mesh.material = texturedOn ? e.texMaterial : flatMaterial;
+      e.texMaterial.lightMap = lightmapsOn ? lightmapTex : null;
+      e.texMaterial.needsUpdate = true;
     }
   };
-  applyMode(textured);
+  refreshMaterials();
 
   const applyTransparent = (on: boolean) => {
     for (const e of entries) {
       const mat = e.texMaterial;
-      if (on) {
-        mat.transparent = true;
-        mat.depthWrite = false;
-        mat.alphaTest = 0;
-      } else {
-        mat.transparent = false;
-        mat.depthWrite = true;
-        mat.alphaTest = 0;
-      }
+      mat.transparent = on;
+      mat.depthWrite = !on;
+      mat.alphaTest = 0;
       mat.needsUpdate = true;
     }
   };
 
   return {
-    setTextured: applyMode,
+    setTextured(on) {
+      texturedOn = on;
+      refreshMaterials();
+    },
     setTransparent: applyTransparent,
+    setLightmaps(on) {
+      lightmapsOn = on;
+      refreshMaterials();
+    },
+    setPvs(on) {
+      pvsEnabled = on && pvs !== null;
+      lastLeaf = -2;
+    },
+    focusOn,
     enterFirstPerson,
     exitFirstPerson,
     setFullscreen,
+    onStats(listener) {
+      statsListener = listener;
+    },
     dispose() {
       cancelAnimationFrame(raf);
       ro.disconnect();
@@ -366,6 +442,7 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
         e.texMaterial.dispose();
         (e.texMaterial.map as THREE.Texture | null)?.dispose();
       }
+      lightmapTex?.dispose();
       flatMaterial.dispose();
       scene.remove(sky);
       disposeSky(sky);
@@ -373,6 +450,10 @@ export function mount3D(container: HTMLElement, mesh: MeshDetail, textured: bool
         (s as THREE.Mesh).geometry.dispose();
         ((s as THREE.Mesh).material as THREE.Material).dispose();
       }
+      ring.geometry.dispose();
+      pin.geometry.dispose();
+      (ring.material as THREE.Material).dispose();
+      (pin.material as THREE.Material).dispose();
       renderer.dispose();
       renderer.domElement.remove();
     },
