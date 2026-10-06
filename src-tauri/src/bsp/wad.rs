@@ -74,6 +74,17 @@ impl WadSet {
         }
     }
 
+    /// Quantos `.wad` foram de fato achados e lidos no disco.
+    pub fn loaded(&self) -> usize {
+        self.wads.len()
+    }
+
+    /// Algum WAD carregado tem a textura? Barato: só consulta o índice, não decodifica pixel.
+    pub fn contains(&self, name: &str) -> bool {
+        let key = name.to_ascii_lowercase();
+        self.wads.iter().any(|w| w.index.contains_key(&key))
+    }
+
     /// PNG (data URL) para um nome de textura, ou `None` se nenhum WAD a tem.
     pub fn resolve(&mut self, name: &str) -> Option<(String, u32, u32)> {
         let key = name.to_ascii_lowercase();

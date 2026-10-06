@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Uma entidade do lump: pares chave/valor, na ordem em que aparecem.
@@ -63,7 +63,7 @@ pub fn angles_of(entity: &Entity) -> [f32; 3] {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GameMode {
     /// de_ — plantar a bomba

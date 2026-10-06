@@ -20,7 +20,7 @@ impl fmt::Display for BspError {
             }
             BspError::BadVersion(v) => write!(
                 f,
-                "versão {v} não é BSP do GoldSrc (esperado 30 — Half-Life/CS 1.6)"
+                "versão {v} não é BSP do GoldSrc (30) nem do Quake (29) — Source/BSP2 ainda não abrem"
             ),
             BspError::LumpOutOfBounds { lump, offset, len, file } => write!(
                 f,
@@ -69,6 +69,15 @@ impl<'a> Cursor<'a> {
         })?;
         self.pos = end;
         Ok(slice)
+    }
+
+    pub fn u8(&mut self) -> Result<u8> {
+        Ok(self.take(1)?[0])
+    }
+
+    pub fn i16(&mut self) -> Result<i16> {
+        let b = self.take(2)?;
+        Ok(i16::from_le_bytes([b[0], b[1]]))
     }
 
     pub fn u16(&mut self) -> Result<u16> {

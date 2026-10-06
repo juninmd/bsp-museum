@@ -2,20 +2,27 @@ use crate::bsp::entities::{self, EntitySummary, GameMode};
 use crate::bsp::render::{self, RenderOptions};
 use crate::bsp::wad;
 use crate::bsp::{Bsp, Lump, LUMP_ENTITIES, LUMP_LIGHTING, LUMP_MODELS, LUMP_NAMES, LUMP_TEXTURES};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Bounds {
     pub mins: [f32; 3],
     pub maxs: [f32; 3],
     pub size: [f32; 3],
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// Achado barato (id + severidade), calculado na varredura sem abrir o BSP inteiro.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Problem {
+    pub id: String,
+    pub severity: Severity,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapSummary {
     pub path: String,
     pub name: String,
@@ -33,6 +40,13 @@ pub struct MapSummary {
     pub fullbright: bool,
     /// preenchido quando o arquivo não pôde ser lido
     pub error: Option<String>,
+    /// regras que dá para decidir só com entidades + cabeçalho (sem `poucos-spawns`,
+    /// que depende do nº de slots escolhido na UI)
+    #[serde(default)]
+    pub problems: Vec<Problem>,
+    /// versão do BSP (30 GoldSrc, 29 Quake)
+    #[serde(default)]
+    pub bsp_version: i32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -42,22 +56,7 @@ pub struct LumpInfo {
     pub percent: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Severity {
-    Critical,
-    Warn,
-    Info,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Finding {
-    pub id: &'static str,
-    pub severity: Severity,
-    pub title: String,
-    pub detail: String,
-    pub hint: String,
-}
+pub use crate::diagnostics::{Finding, Severity};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MapDetail {
@@ -75,6 +74,7 @@ pub struct MapDetail {
     pub findings: Vec<Finding>,
     pub svg: String,
     pub polygons: usize,
+    pub resources: crate::resources::ResourceReport,
 }
 
 fn map_name(path: &Path) -> String {
@@ -119,6 +119,8 @@ pub fn summarize_file(path: &Path) -> MapSummary {
         bounds: None,
         fullbright: false,
         error: None,
+        problems: Vec::new(),
+        bsp_version: 0,
     };
 
     let mut file = match File::open(path) {
@@ -135,7 +137,10 @@ pub fn summarize_file(path: &Path) -> MapSummary {
         return summary;
     }
     let lumps = match Bsp::header(&header) {
-        Ok((_, lumps)) => lumps,
+        Ok((version, lumps)) => {
+            summary.bsp_version = version;
+            lumps
+        }
         Err(err) => {
             summary.error = Some(err.to_string());
             return summary;
@@ -164,6 +169,10 @@ pub fn summarize_file(path: &Path) -> MapSummary {
     summary.entity_count = ents.total;
     summary.bounds = bounds_of(first_model);
     summary.fullbright = lumps[LUMP_LIGHTING].length == 0;
+    summary.problems = crate::diagnostics::entity_findings(&summary, &ents, 0)
+        .into_iter()
+        .map(|f| Problem { id: f.id.to_string(), severity: f.severity })
+        .collect();
     summary
 }
 
@@ -176,11 +185,12 @@ fn parse_first_model(bytes: &[u8]) -> Option<crate::bsp::Model> {
     let mins = cur.vec3().ok()?;
     let maxs = cur.vec3().ok()?;
     let origin = cur.vec3().ok()?;
-    cur.skip(16).ok()?;
-    cur.skip(4).ok()?;
+    let headnode = cur.i32().ok()?;
+    cur.skip(12).ok()?;
+    let visleafs = cur.i32().ok()?;
     let first_face = cur.i32().ok()?;
     let num_faces = cur.i32().ok()?;
-    Some(crate::bsp::Model { mins, maxs, origin, first_face, num_faces })
+    Some(crate::bsp::Model { mins, maxs, origin, headnode, visleafs, first_face, num_faces })
 }
 
 pub fn find_bsp_files(dir: &Path) -> Vec<PathBuf> {
@@ -223,156 +233,120 @@ pub fn scan(dir: &Path) -> Vec<MapSummary> {
     results.into_iter().flatten().collect()
 }
 
-/// Regras herdadas do ritual de subir mapa em servidor: o que faz o round não
-/// terminar, o jogador não comprar, ou o mapa carregar como deathmatch.
-pub fn findings(summary: &MapSummary, ents: &EntitySummary, bsp: &Bsp, slots: usize) -> Vec<Finding> {
-    let mut out = Vec::new();
-    let mut push = |id: &'static str, severity: Severity, title: String, detail: String, hint: &str| {
-        out.push(Finding { id, severity, title, detail, hint: hint.to_string() });
-    };
+/// Índice persistente da varredura: o resumo de cada mapa, guardado com tamanho e
+/// data do arquivo. Reabrir uma pasta de 2000 mapas só relê o que mudou.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct IndexCache {
+    /// muda quando o formato do `MapSummary` muda: índice antigo é descartado
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub entries: HashMap<String, IndexEntry>,
+}
 
-    match summary.mode {
-        GameMode::Bomb if ents.bomb_targets == 0 => push(
-            "de-sem-bomb-target",
-            Severity::Critical,
-            "Prefixo de_ sem func_bomb_target".into(),
-            "O CS entra em modo bomba pelo prefixo, mas não existe alvo para plantar.".into(),
-            "O round nunca termina por objetivo — só por tempo ou eliminação. Adicione func_bomb_target (ou info_bomb_target) e um info_map_parameters se quiser afinar o tempo.",
-        ),
-        GameMode::Hostage if ents.hostages == 0 => push(
-            "cs-sem-refem",
-            Severity::Critical,
-            "Prefixo cs_ sem hostage_entity".into(),
-            "Mapa de resgate sem refém nenhum.".into(),
-            "Sem hostage_entity o objetivo não existe. Adicione os reféns e a func_hostage_rescue correspondente.",
-        ),
-        GameMode::Hostage if ents.rescue_zones == 0 && ents.ct_spawns == 0 => push(
-            "cs-sem-resgate",
-            Severity::Warn,
-            "Reféns sem zona de resgate e sem spawn CT".into(),
-            format!("{} refém(ns), nenhuma zona de resgate e nenhum spawn de CT.", ents.hostages),
-            "O GoldSrc resgata refém perto de qualquer info_player_start — sem spawn de CT o resgate não tem para onde convergir.",
-        ),
-        GameMode::Hostage if ents.rescue_zones == 0 => push(
-            "cs-sem-resgate",
-            Severity::Info,
-            "Reféns sem zona de resgate explícita".into(),
-            format!("{} refém(ns), nenhuma func_/info_hostage_rescue.", ents.hostages),
-            "Não é erro: sem zona, o motor resgata o refém quando ele fica a menos de 256u de qualquer spawn de CT (fallback oficial do GoldSrc).",
-        ),
-        GameMode::Assassination if ents.vip_starts == 0 || ents.vip_safety == 0 => push(
-            "as-incompleto",
-            Severity::Critical,
-            "Prefixo as_ incompleto".into(),
-            format!("info_vip_start={}, func_vip_safetyzone={}", ents.vip_starts, ents.vip_safety),
-            "Modo VIP precisa dos dois: um spawn de VIP e ao menos uma zona segura.",
-        ),
-        _ => {}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexEntry {
+    pub size: u64,
+    pub mtime: u64,
+    pub summary: MapSummary,
+}
+
+pub const INDEX_VERSION: u32 = 2;
+
+fn stamp(path: &Path) -> (u64, u64) {
+    let meta = std::fs::metadata(path).ok();
+    let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    let mtime = meta
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    (size, mtime)
+}
+
+/// Varredura que reaproveita o índice: só os arquivos novos ou alterados são lidos.
+/// Devolve os resumos e quantos vieram do cache.
+pub fn scan_cached(dir: &Path, cache: &mut IndexCache) -> (Vec<MapSummary>, usize) {
+    if cache.version != INDEX_VERSION {
+        *cache = IndexCache { version: INDEX_VERSION, entries: HashMap::new() };
     }
-
-    // O caminho inverso: as entidades prometem um modo que o nome não entrega.
-    if ents.mode_by_entities != GameMode::Unknown
-        && ents.mode_by_entities != GameMode::Deathmatch
-        && summary.mode != ents.mode_by_entities
-    {
-        push(
-            "prefixo-divergente",
-            Severity::Warn,
-            format!(
-                "Entidades de {} num arquivo {}",
-                ents.mode_by_entities.label(),
-                summary.mode.label()
-            ),
-            "O CS decide o modo pelo prefixo do arquivo, não pelo conteúdo.".into(),
-            "Renomeie o BSP para o prefixo certo, ou o objetivo montado no mapa nunca será usado.",
-        );
+    let files = find_bsp_files(dir);
+    let mut slots: Vec<Option<MapSummary>> = Vec::with_capacity(files.len());
+    let mut stale: Vec<(usize, PathBuf)> = Vec::new();
+    for (i, path) in files.iter().enumerate() {
+        let key = path.to_string_lossy().to_string();
+        let (size, mtime) = stamp(path);
+        match cache.entries.get(&key) {
+            Some(entry) if entry.size == size && entry.mtime == mtime => slots.push(Some(entry.summary.clone())),
+            _ => {
+                slots.push(None);
+                stale.push((i, path.clone()));
+            }
+        }
     }
+    let hits = files.len() - stale.len();
 
-    let total_spawns = ents.ct_spawns + ents.t_spawns;
-    if total_spawns == 0 {
-        push(
-            "sem-spawn",
-            Severity::Critical,
-            "Nenhum ponto de spawn".into(),
-            "Nem info_player_start nem info_player_deathmatch.".into(),
-            "Ninguém entra. Este BSP não sobe em servidor.",
-        );
+    let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
+    let fresh: Vec<(usize, MapSummary)> = if stale.len() < 2 || workers < 2 {
+        stale.iter().map(|(i, p)| (*i, summarize_file(p))).collect()
     } else {
-        if ents.ct_spawns == 0 || ents.t_spawns == 0 {
-            push(
-                "spawn-de-um-time-so",
-                Severity::Critical,
-                "Spawn de um time só".into(),
-                format!("CT={} · T={}", ents.ct_spawns, ents.t_spawns),
-                "O time sem spawn não consegue entrar em jogo. Em mapa de Zombie Plague isso às vezes é proposital, mas confira.",
-            );
-        }
-        if total_spawns < slots {
-            push(
-                "poucos-spawns",
-                Severity::Warn,
-                format!("{total_spawns} spawns para {slots} slots"),
-                format!("CT={} · T={}", ents.ct_spawns, ents.t_spawns),
-                "Com mais jogadores que spawns, o servidor empilha gente no mesmo ponto (telefrag e queda de FPS no início do round).",
-            );
-        }
+        let chunk = stale.len().div_ceil(workers);
+        let mut parts: Vec<Vec<(usize, MapSummary)>> = Vec::new();
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = stale
+                .chunks(chunk)
+                .map(|slice| scope.spawn(move || slice.iter().map(|(i, p)| (*i, summarize_file(p))).collect::<Vec<_>>()))
+                .collect();
+            for h in handles {
+                parts.push(h.join().unwrap_or_default());
+            }
+        });
+        parts.into_iter().flatten().collect()
+    };
+    for (i, summary) in fresh {
+        let (size, mtime) = stamp(&files[i]);
+        cache.entries.insert(files[i].to_string_lossy().to_string(), IndexEntry { size, mtime, summary: summary.clone() });
+        slots[i] = Some(summary);
     }
+    (slots.into_iter().flatten().collect(), hits)
+}
 
-    if summary.fullbright {
-        push(
-            "fullbright",
-            Severity::Warn,
-            "Mapa sem lightmap (fullbright)".into(),
-            "O lump de iluminação está vazio.".into(),
-            "Ou faltou rodar o RAD na compilação, ou houve leak. Visualmente é aquele mapa chapado, sem sombra.",
-        );
-    }
-
-    if matches!(summary.mode, GameMode::Bomb | GameMode::Hostage | GameMode::Assassination)
-        && ents.buy_zones == 0
-    {
-        push(
-            "sem-buyzone",
-            Severity::Warn,
-            "Mapa competitivo sem func_buyzone".into(),
-            "Nenhuma zona de compra encontrada.".into(),
-            "Sem buyzone o jogador só tem a pistola inicial. Em mapa de zumbi isso costuma ser intencional.",
-        );
-    }
-
-    let from_wad = bsp.textures.iter().filter(|t| !t.embedded).count();
-    if from_wad > 0 && ents.wads.is_empty() {
-        push(
-            "wad-nao-declarado",
-            Severity::Warn,
-            format!("{from_wad} textura(s) de WAD, mas o worldspawn não lista nenhum"),
-            "A chave \"wad\" do worldspawn está vazia.".into(),
-            "Quem não tiver o WAD certo vê tudo rosa e preto. Ou embuta as texturas, ou declare o WAD.",
-        );
-    }
-
-    if summary.file_size > 8 * 1024 * 1024 {
-        push(
-            "mapa-pesado",
-            Severity::Info,
-            format!("{:.1} MB", summary.file_size as f64 / 1024.0 / 1024.0),
-            "Mapa grande para download de jogador em servidor público.".into(),
-            "Acima de ~8 MB muita gente desiste no meio do download. Vale checar o que domina os lumps.",
-        );
-    }
-
+/// Todas as regras que não precisam olhar o disco: entidades + BSP.
+pub fn findings(summary: &MapSummary, ents: &EntitySummary, bsp: &Bsp, slots: usize) -> Vec<Finding> {
+    let mut out = crate::diagnostics::entity_findings(summary, ents, slots);
+    out.extend(crate::diagnostics::bsp_findings(ents, bsp));
     out
 }
 
-pub fn detail(path: &Path, opts: RenderOptions, slots: usize) -> Result<MapDetail, String> {
+/// Mapa aberto por inteiro + achados completos (entidades, BSP e disco).
+/// É o que o detalhe, a auditoria e a comparação compartilham.
+pub struct Analysis {
+    pub bsp: Bsp,
+    pub parsed: Vec<entities::Entity>,
+    pub ents: EntitySummary,
+    pub summary: MapSummary,
+    pub findings: Vec<Finding>,
+    pub resources: crate::resources::ResourceReport,
+}
+
+pub fn analyze(path: &Path, slots: usize) -> Result<Analysis, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("não leu o arquivo: {e}"))?;
     let bsp = Bsp::parse(&bytes).map_err(|e| e.to_string())?;
+    drop(bytes);
     let parsed = entities::parse(&bsp.entities_raw);
     let ents = entities::summarize(&parsed);
     let mut summary = summarize_file(path);
     // O resumo leve não enxerga o lump de iluminação com precisão; aqui sim.
     summary.fullbright = bsp.lumps[LUMP_LIGHTING].length == 0;
 
+    let resources = crate::resources::collect(path, &ents, &parsed);
+    let mut findings = findings(&summary, &ents, &bsp, slots);
+    findings.extend(crate::diagnostics::disk_findings(path, &ents, &bsp, &resources));
+    findings.sort_by_key(|f| f.severity);
+    Ok(Analysis { bsp, parsed, ents, summary, findings, resources })
+}
+
+pub fn lump_infos(bsp: &Bsp) -> Vec<LumpInfo> {
     let total: usize = bsp.lumps.iter().map(|l| l.length).sum();
     let mut lumps: Vec<LumpInfo> = bsp
         .lumps
@@ -385,9 +359,12 @@ pub fn detail(path: &Path, opts: RenderOptions, slots: usize) -> Result<MapDetai
         })
         .collect();
     lumps.sort_by(|a, b| b.length.cmp(&a.length));
+    lumps
+}
 
+pub fn detail(path: &Path, opts: RenderOptions, slots: usize) -> Result<MapDetail, String> {
+    let Analysis { bsp, ents, summary, findings, resources, .. } = analyze(path, slots)?;
     let rendered = render::top_down(&bsp, &ents.spawns, opts);
-    let findings = findings(&summary, &ents, &bsp, slots);
 
     let mut textures: Vec<String> = bsp.textures.iter().map(|t| t.name.clone()).collect();
     textures.sort();
@@ -404,10 +381,11 @@ pub fn detail(path: &Path, opts: RenderOptions, slots: usize) -> Result<MapDetai
         vertex_count: bsp.vertices.len(),
         model_count: bsp.models.len(),
         histogram: ents.histogram.clone(),
-        lumps,
+        lumps: lump_infos(&bsp),
         findings,
         svg: rendered.svg,
         polygons: rendered.polygons,
+        resources,
     })
 }
 
@@ -457,6 +435,59 @@ pub struct MeshDetail {
     pub wad_textures: usize,
     pub triangles: usize,
     pub skipped: usize,
+    /// atlas de lightmaps (`data:image/png`), ausente em mapa fullbright
+    pub lightmap: Option<String>,
+    /// uv no atlas por vértice (6 floats por triângulo); vazio sem atlas
+    pub lm_uvs: Vec<f32>,
+    /// face do BSP de cada triângulo (`-1` = prop `.mdl`, sempre visível)
+    pub tri_face: Vec<i32>,
+    /// árvore + visibilidade para o viewer desenhar só o que a câmera enxerga
+    pub pvs: Option<PvsData>,
+    /// versão do BSP (30 GoldSrc, 29 Quake)
+    pub bsp_version: i32,
+}
+
+/// Dados mínimos de PVS: o viewer acha a folha da câmera descendo a árvore e
+/// liga só as faces das folhas visíveis.
+#[derive(Debug, Clone, Serialize)]
+pub struct PvsData {
+    /// 4 floats por plano: nx, ny, nz, dist
+    pub planes: Vec<f32>,
+    /// 3 ints por nó: plano, filho 0, filho 1 (negativo = folha `-1 - n`)
+    pub nodes: Vec<i32>,
+    /// 4 ints por folha: contents, visofs, primeira marksurface, quantidade
+    pub leaves: Vec<i32>,
+    pub marksurfaces: Vec<u16>,
+    /// lump de visibilidade em base64
+    pub visibility: String,
+    pub headnode: i32,
+    pub visleafs: i32,
+    /// faces do modelo 0 (as demais são brush entities, sempre desenhadas)
+    pub world_first_face: i32,
+    pub world_face_count: i32,
+}
+
+fn pvs_data(bsp: &Bsp) -> Option<PvsData> {
+    use base64::Engine as _;
+    let world = bsp.models.first()?;
+    if bsp.nodes.is_empty() || bsp.leaves.len() < 2 || bsp.visibility.is_empty() || world.visleafs <= 0 {
+        return None;
+    }
+    Some(PvsData {
+        planes: bsp.planes.iter().flat_map(|p| [p.normal[0], p.normal[1], p.normal[2], p.dist]).collect(),
+        nodes: bsp.nodes.iter().flat_map(|n| [n.plane, i32::from(n.children[0]), i32::from(n.children[1])]).collect(),
+        leaves: bsp
+            .leaves
+            .iter()
+            .flat_map(|l| [l.contents, l.visofs, i32::from(l.first_marksurface), i32::from(l.num_marksurfaces)])
+            .collect(),
+        marksurfaces: bsp.marksurfaces.clone(),
+        visibility: base64::engine::general_purpose::STANDARD.encode(&bsp.visibility),
+        headnode: world.headnode,
+        visleafs: world.visleafs,
+        world_first_face: world.first_face,
+        world_face_count: world.num_faces,
+    })
 }
 
 /// Decode de uma textura com cache: primeiro os pixels embutidos no BSP,
@@ -470,11 +501,12 @@ fn texture_slot(
     raw: usize,
     raw_name: &str,
     wads: &mut wad::WadSet,
+    quake: bool,
 ) -> Option<(usize, f32, f32)> {
     if let Some(known) = cache.get(&raw) {
         return *known;
     }
-    let mut resolved = crate::bsp::texture_image(bytes, lump, raw).map(|img| {
+    let mut resolved = crate::bsp::texture_image_for(bytes, lump, raw, quake).map(|img| {
         let slot = textures.len();
         textures.push(MeshTexture { name: img.name, png: Some(img.png) });
         (slot, img.width as f32, img.height as f32)
@@ -526,6 +558,11 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
         wad_textures: 0,
         triangles: 0,
         skipped: 0,
+        lightmap: None,
+        lm_uvs: Vec::new(),
+        tri_face: Vec::new(),
+        pvs: None,
+        bsp_version: bsp.version,
     };
     let Some(bounds) = bsp.bounds() else {
         return Ok(empty(ents.spawns, skybox));
@@ -539,8 +576,11 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
     let mut texindex = Vec::new();
     let mut triangles = 0usize;
     let mut skipped = 0usize;
+    let atlas = crate::bsp::light::build_atlas(&bsp);
+    let mut lm_uvs: Vec<f32> = Vec::new();
+    let mut tri_face: Vec<i32> = Vec::new();
 
-    for face in &bsp.faces {
+    for (face_index, face) in bsp.faces.iter().enumerate() {
         if let Some(tex) = bsp.texture_of(face) {
             if render::is_invisible(&tex.name) {
                 skipped += 1;
@@ -564,7 +604,7 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
             .unwrap_or("");
         let mut slot = None;
         if let Some(m) = miptex {
-            slot = texture_slot(&mut cache, &mut textures, &bytes, tex_lump, m as usize, raw_name, &mut wads);
+            slot = texture_slot(&mut cache, &mut textures, &bytes, tex_lump, m as usize, raw_name, &mut wads, bsp.is_quake());
         }
         // Índice de textura para o frontend, com sentinela para "sem imagem".
         let index = slot.map(|(s, _, _)| s as u32).unwrap_or(u32::MAX);
@@ -572,12 +612,20 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
         let vecs = bsp.texinfo_vecs.get(texinfo_ix).copied();
 
         let mut face_uv: Vec<[f32; 2]> = vec![[0.0, 0.0]; points.len()];
+        let mut face_lm: Vec<[f32; 2]> = Vec::new();
         if let Some(v) = vecs {
             let (w, h) = slot.map(|(_, w, h)| (w, h)).unwrap_or((1.0, 1.0));
             for (i, p) in points.iter().enumerate() {
-                let s = v[0][0] * p[0] + v[0][1] * p[1] + v[0][2] * p[2] + v[0][3];
-                let t = v[1][0] * p[0] + v[1][1] * p[1] + v[1][2] * p[2] + v[1][3];
+                let (s, t) = crate::bsp::light::st_of(&v, *p);
                 face_uv[i] = [s / w, t / h];
+                if let Some(atlas) = &atlas {
+                    face_lm.push(atlas.uv(face_index, s, t));
+                }
+            }
+        }
+        if let Some(atlas) = &atlas {
+            if face_lm.is_empty() {
+                face_lm = vec![atlas.white_uv(); points.len()];
             }
         }
 
@@ -591,7 +639,12 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
             let ub = face_uv[i];
             let uc = face_uv[i + 1];
             uvs.extend_from_slice(&[ua[0], ua[1], ub[0], ub[1], uc[0], uc[1]]);
+            if atlas.is_some() {
+                let (la, lb, lc) = (face_lm[0], face_lm[i], face_lm[i + 1]);
+                lm_uvs.extend_from_slice(&[la[0], la[1], lb[0], lb[1], lc[0], lc[1]]);
+            }
             texindex.push(index);
+            tri_face.push(face_index as i32);
             triangles += 1;
         }
     }
@@ -632,6 +685,19 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
         uvs.extend_from_slice(&prop.uvs);
         texindex.extend(prop.texindex.iter().map(|t| base_tex + t));
         triangles += prop.texindex.len();
+        // prop sem lightmap: aponta todo vértice para o texel branco do atlas.
+        tri_face.extend(std::iter::repeat(-1).take(prop.texindex.len()));
+        if let Some(atlas) = &atlas {
+            let white = atlas.white_uv();
+            for _ in 0..prop.texindex.len() * 3 {
+                lm_uvs.extend_from_slice(&white);
+            }
+        }
+    }
+
+    let lightmap = atlas.as_ref().and_then(|a| crate::bsp::rgba_png(a.width, a.height, &a.rgba));
+    if lightmap.is_none() {
+        lm_uvs.clear();
     }
 
     Ok(MeshDetail {
@@ -645,6 +711,11 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
         wad_textures,
         triangles,
         skipped,
+        lightmap,
+        lm_uvs,
+        tri_face,
+        pvs: pvs_data(&bsp),
+        bsp_version: bsp.version,
     })
 }
 
