@@ -99,8 +99,35 @@ export interface MdlSummary {
   uvs: number[];
   texindex: number[];
   textures: MeshTexture[];
-  /** nomes das sequências — metadado; trocar não muda a pose desenhada nesta versão */
+  /** nomes das sequências (mesma ordem de `sequence_info`) */
   sequences: string[];
+  sequence_info: MdlSeqInfo[];
+  /** mesmos vértices de `positions`, no espaço local do bone dono — entrada do skinning */
+  local_positions: number[];
+  /** bone dono de cada vértice (3 por triângulo) */
+  vert_bones: number[];
+  num_bones: number;
+  /** por família de skin: textura que substitui cada textura base (índice = textura da família 0) */
+  skin_families: number[][];
+}
+
+export interface MdlSeqInfo {
+  name: string;
+  fps: number;
+  frames: number;
+  looping: boolean;
+  blends: number;
+  /** 0 = dados no próprio arquivo; N > 0 = no arquivo externo `nome0N.mdl` */
+  group: number;
+}
+
+/** Quadros de uma sequência: pose de mundo por bone, 7 floats (px,py,pz,qx,qy,qz,qw) por bone por quadro. */
+export interface MdlSeqFrames {
+  frames: number;
+  bones: number;
+  fps: number;
+  looping: boolean;
+  data: number[];
 }
 
 export interface MeshDetail {

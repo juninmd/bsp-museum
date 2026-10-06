@@ -697,8 +697,9 @@ h3 {
 
 .res-viewer-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.5rem 0.8rem;
   margin-bottom: 0.4rem;
   font-size: 0.78rem;
   color: var(--dim);
@@ -712,6 +713,18 @@ h3 {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
+}
+
+.chk-seq[hidden] {
+  display: none;
+}
+
+.res-viewer-toolbar input[type="range"] {
+  width: 9rem;
+}
+
+.res-viewer-toolbar .hintc {
+  font-variant-numeric: tabular-nums;
 }
 
 .res-viewer3d {
