@@ -83,11 +83,27 @@
         <div class="res-col" id="res-files" aria-label="arquivos .mdl"></div>
         <div class="res-viewer-wrap">
           <div class="res-viewer-toolbar" id="res-viewer-toolbar" hidden>
-            <label class="chk-seq" title="a sequência é só metadado nesta versão — trocar não muda a pose desenhada">
+            <label class="chk-seq">
               sequência
               <select id="res-sequence"></select>
-              <span class="hintc">(pose de repouso — animação ainda não decodificada)</span>
             </label>
+            <button id="res-play" type="button">tocar</button>
+            <input id="res-frame" type="range" min="0" max="0" step="1" value="0" aria-label="quadro" />
+            <span id="res-frame-label" class="hintc">–</span>
+            <label class="chk-seq">
+              velocidade
+              <select id="res-speed">
+                <option value="0.25">0,25×</option>
+                <option value="0.5">0,5×</option>
+                <option value="1" selected>1×</option>
+                <option value="2">2×</option>
+              </select>
+            </label>
+            <label class="chk-seq" id="res-skin-wrap" hidden>
+              skin
+              <select id="res-skin"></select>
+            </label>
+            <span id="res-anim-note" class="hintc"></span>
           </div>
           <div class="res-viewer3d" id="res-viewer3d"></div>
         </div>

@@ -26,7 +26,6 @@ const resDirs = document.querySelector<HTMLElement>("#res-dirs")!;
 const resFiles = document.querySelector<HTMLElement>("#res-files")!;
 const resViewer3d = document.querySelector<HTMLElement>("#res-viewer3d")!;
 const resViewerToolbar = document.querySelector<HTMLElement>("#res-viewer-toolbar")!;
-const resSequence = document.querySelector<HTMLSelectElement>("#res-sequence")!;
 
 /** elemento a devolver o foco quando o drawer fechar (o card que foi clicado/ativado) */
 let lastFocused: HTMLElement | null = null;
@@ -483,7 +482,7 @@ function fillModeFilter() {
 
 // -------------------------------------------------------------- Recursos (aba avulsa)
 
-let resViewer: Viewer3D | null = null;
+let resViewer: { dispose(): void } | null = null;
 let resRoot = "";
 
 function switchView(view: "maps" | "resources") {
@@ -550,9 +549,7 @@ async function openModel(path: string) {
   try {
     const model = await invoke<MdlSummary>("load_model", { path });
     resViewer3d.replaceChildren();
-    resViewer = mountModelViewer(resViewer3d, model);
-    resSequence.replaceChildren();
-    for (const seq of model.sequences) resSequence.append(new Option(seq, seq));
+    resViewer = mountModelViewer(resViewer3d, model, path);
     resViewerToolbar.hidden = model.sequences.length === 0;
   } catch (err) {
     resViewer3d.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;

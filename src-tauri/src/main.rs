@@ -251,6 +251,11 @@ fn load_model(path: String) -> Result<catalog::MdlSummary, String> {
 }
 
 #[tauri::command]
+fn load_sequence(path: String, index: usize) -> Result<mdl::SeqFrames, String> {
+    catalog::load_sequence(&PathBuf::from(path), index)
+}
+
+#[tauri::command]
 fn load_settings(state: tauri::State<'_, AppState>) -> Settings {
     std::fs::read_to_string(&state.config_file)
         .ok()
@@ -316,6 +321,7 @@ fn main() {
             list_model_dirs,
             list_models,
             load_model,
+            load_sequence,
             load_settings,
             save_settings,
             clear_cache

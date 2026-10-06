@@ -784,14 +784,25 @@ pub fn list_models(dir: &Path) -> Vec<String> {
 }
 
 /// Modelo `.mdl` isolado, decodificado pro frontend — mesma malha não-indexada
-/// de `MeshDetail`, mais os nomes de sequência (metadado, ver `mdl` module).
+/// de `MeshDetail`, mais o que o frontend precisa pra animar: vértices em espaço
+/// local do bone (skinning na CPU), metadado das sequências e famílias de skin.
+/// Os quadros de cada sequência vêm sob demanda (`load_sequence`).
 #[derive(Debug, Clone, Serialize)]
 pub struct MdlSummary {
+    /// pose de repouso, em espaço de mundo do modelo
     pub positions: Vec<f32>,
     pub uvs: Vec<f32>,
     pub texindex: Vec<u32>,
     pub textures: Vec<MeshTexture>,
     pub sequences: Vec<String>,
+    pub sequence_info: Vec<crate::mdl::SeqInfo>,
+    /// mesmos vértices de `positions`, em espaço local do bone dono (9 floats por triângulo)
+    pub local_positions: Vec<f32>,
+    /// bone dono de cada vértice (3 por triângulo)
+    pub vert_bones: Vec<u8>,
+    pub num_bones: u32,
+    /// por família de skin: textura que substitui cada textura base (índice = textura da família 0)
+    pub skin_families: Vec<Vec<u32>>,
 }
 
 pub fn load_model(path: &Path) -> Result<MdlSummary, String> {
@@ -807,5 +818,31 @@ pub fn load_model(path: &Path) -> Result<MdlSummary, String> {
             .map(|t| MeshTexture { name: t.name, png: Some(t.png) })
             .collect(),
         sequences: model.sequences,
+        sequence_info: model.seq_info,
+        local_positions: model.local_positions,
+        vert_bones: model.vert_bones,
+        num_bones: model.num_bones,
+        skin_families: model.skin_families,
     })
+}
+
+/// Arquivo de grupo externo de sequências: `modelo.mdl` + grupo 1 -> `modelo01.mdl`
+/// (convenção do `studiomdl`), na mesma pasta e com a mesma extensão do original.
+fn external_group_path(path: &Path, group: u32) -> PathBuf {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("mdl");
+    path.with_file_name(format!("{stem}{group:02}.{ext}"))
+}
+
+/// Quadros de uma sequência (pose de mundo por bone), carregados sob demanda
+/// pra não mandar a animação inteira do modelo de uma vez pelo IPC. Arredondados
+/// a 1e-4 (sobra de sobra pra pose; encurta o JSON pela metade).
+pub fn load_sequence(path: &Path, index: usize) -> Result<crate::mdl::SeqFrames, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("não leu o arquivo: {e}"))?;
+    let external = |group: u32| std::fs::read(external_group_path(path, group)).ok();
+    let mut frames = crate::mdl::sequence_frames(&bytes, index, &external).map_err(|e| e.to_string())?;
+    for v in &mut frames.data {
+        *v = (*v * 1e4).round() / 1e4;
+    }
+    Ok(frames)
 }
