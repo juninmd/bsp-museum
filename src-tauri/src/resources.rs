@@ -146,13 +146,3 @@ pub fn collect(map_path: &Path, ents: &EntitySummary, entities: &[Entity]) -> Re
         items,
     }
 }
-
-/// Lista de FastDL: um caminho por linha, só o que o jogador precisa baixar.
-pub fn fastdl_list(report: &ResourceReport) -> String {
-    let mut out = String::new();
-    for item in report.items.iter().filter(|i| i.found && !i.shared) {
-        out.push_str(&item.path);
-        out.push('\n');
-    }
-    out
-}

@@ -8,8 +8,6 @@ pub enum BspError {
     BadVersion(i32),
     LumpOutOfBounds { lump: &'static str, offset: usize, len: usize, file: usize },
     LumpMisaligned { lump: &'static str, len: usize, stride: usize },
-    BadIndex { what: &'static str, index: usize, len: usize },
-    Empty(&'static str),
 }
 
 impl fmt::Display for BspError {
@@ -31,10 +29,6 @@ impl fmt::Display for BspError {
                 f,
                 "lump {lump} tem {len} bytes, que não é múltiplo de {stride}"
             ),
-            BspError::BadIndex { what, index, len } => {
-                write!(f, "índice de {what} fora da faixa: {index} de {len}")
-            }
-            BspError::Empty(what) => write!(f, "{what} vazio"),
         }
     }
 }
@@ -52,10 +46,6 @@ pub struct Cursor<'a> {
 impl<'a> Cursor<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         Self { data, pos: 0 }
-    }
-
-    pub fn remaining(&self) -> usize {
-        self.data.len().saturating_sub(self.pos)
     }
 
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {

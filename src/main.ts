@@ -336,7 +336,7 @@ function switchView(view: "maps" | "resources") {
 function renderResDirs(dirs: ModelDir[]) {
   resDirs.replaceChildren();
   if (!dirs.length) {
-    resDirs.innerHTML = `<p class="empty">Nenhum .mdl encontrado nessa pasta.</p>`;
+    resDirs.innerHTML = `<p class="empty">${escapeHtml(t("mdl.noneFound"))}</p>`;
     return;
   }
   for (const dir of dirs) {
@@ -356,7 +356,7 @@ function renderResDirs(dirs: ModelDir[]) {
 function renderResFiles(files: string[]) {
   resFiles.replaceChildren();
   if (!files.length) {
-    resFiles.innerHTML = `<p class="empty">Pasta vazia.</p>`;
+    resFiles.innerHTML = `<p class="empty">${escapeHtml(t("mdl.emptyDir"))}</p>`;
     return;
   }
   for (const path of files) {
@@ -377,7 +377,7 @@ async function openModel(path: string) {
   resViewer?.dispose();
   resViewer = null;
   resViewerToolbar.hidden = true;
-  resViewer3d.innerHTML = `<div class="loading">decodificando modelo…</div>`;
+  resViewer3d.innerHTML = `<div class="loading">${escapeHtml(t("mdl.decoding"))}</div>`;
   try {
     const model = await invoke<MdlSummary>("load_model", { path });
     resViewer3d.replaceChildren();
@@ -392,7 +392,7 @@ navMaps.addEventListener("click", () => switchView("maps"));
 navResources.addEventListener("click", () => switchView("resources"));
 
 resPickBtn.addEventListener("click", async () => {
-  const dir = await open({ directory: true, multiple: false, title: "pasta do mod (ou de models/)" });
+  const dir = await open({ directory: true, multiple: false, title: t("mdl.pickTitle") });
   if (typeof dir !== "string") return;
   resRoot = dir;
   resRootLabel.textContent = dir;

@@ -66,6 +66,8 @@ struct Quad {
     lit: bool,
 }
 
+/// textura que só existe no WAD (entra na tabela, nenhuma face a usa)
+pub const EXTERNAL_TEXTURE: &str = "externa";
 pub const TEXTURES: [&str; 5] = ["concrete", "brick", "crate", "plaster", "{grate"];
 const TEX_SIZE: usize = 64;
 
@@ -120,7 +122,7 @@ fn texture_pixels(kind: usize) -> Vec<u8> {
                 }
                 // caixote: tábuas de madeira com cantoneira
                 2 => {
-                    if x < 3 || x >= 61 || y < 3 || y >= 61 || (x as i32 - y as i32).abs() < 2 {
+                    if !(3..61).contains(&x) || !(3..61).contains(&y) || (x as i32 - y as i32).abs() < 2 {
                         140 + noise
                     } else {
                         128 + (y % 8) as u8 * 3 + noise
@@ -142,14 +144,17 @@ fn texture_pixels(kind: usize) -> Vec<u8> {
     px
 }
 
-fn textures_lump() -> Vec<u8> {
-    let count = TEXTURES.len();
+fn textures_lump(external: bool) -> Vec<u8> {
+    let count = TEXTURES.len() + usize::from(external);
     let table = 4 + count * 4;
     let mip_len = 40 + TEX_SIZE * TEX_SIZE;
     let mut out = Vec::new();
     out.extend_from_slice(&(count as u32).to_le_bytes());
-    for i in 0..count {
+    for i in 0..TEXTURES.len() {
         out.extend_from_slice(&((table + i * mip_len) as i32).to_le_bytes());
+    }
+    if external {
+        out.extend_from_slice(&((table + TEXTURES.len() * mip_len) as i32).to_le_bytes());
     }
     for (i, name) in TEXTURES.iter().enumerate() {
         let mut raw = [0u8; 16];
@@ -161,17 +166,27 @@ fn textures_lump() -> Vec<u8> {
         out.extend_from_slice(&[0u8; 12]);
         out.extend_from_slice(&texture_pixels(i));
     }
-    out.extend_from_slice(&[0u8; 2]); // preenchimento do formato
-    out.truncate(out.len() - 2);
+    if external {
+        // só o cabeçalho: sem pixels (offsets 0) = a textura vem de um WAD
+        let mut raw = [0u8; 16];
+        raw[..EXTERNAL_TEXTURE.len()].copy_from_slice(EXTERNAL_TEXTURE.as_bytes());
+        out.extend_from_slice(&raw);
+        out.extend_from_slice(&(TEX_SIZE as u32).to_le_bytes());
+        out.extend_from_slice(&(TEX_SIZE as u32).to_le_bytes());
+        out.extend_from_slice(&[0u8; 16]);
+    }
     out.extend_from_slice(&palette());
     out
 }
 
-fn room_quads() -> Vec<Quad> {
+fn room_quads(rooms: usize) -> Vec<Quad> {
     let (y0, y1, z0, z1) = (-256.0f32, 256.0f32, 0.0f32, 256.0f32);
     let mut q: Vec<Quad> = Vec::new();
     // chão e teto de cada sala: (x0, x1, folha)
-    for (x0, x1, leaf, floor_tex) in [(-512.0f32, 0.0f32, 1usize, 0usize), (0.0, 512.0, 2, 0), (512.0, 1024.0, 3, 0)] {
+    for (x0, x1, leaf, floor_tex) in [(-512.0f32, 0.0f32, 1usize, 0usize), (0.0, 512.0, 2, 0), (512.0, 1024.0, 3, 0)]
+        .into_iter()
+        .take(rooms)
+    {
         let leaves: &'static [usize] = match leaf {
             1 => &[1],
             2 => &[2],
@@ -188,10 +203,15 @@ fn room_quads() -> Vec<Quad> {
     }
     // parede do fundo da sala A (x=-512), normal +X: u=Y, v=Z (y×z = +X)
     q.push(Quad { origin: [-512.0, y0, z0], u: [0.0, 1.0, 0.0], v: [0.0, 0.0, 1.0], w: y1 - y0, h: z1 - z0, tex: 1, leaves: &[1], lit: true });
-    // parede do fundo da sala C (x=1024), normal -X: u=Z, v=Y (z×y = -X)
-    q.push(Quad { origin: [1024.0, y0, z0], u: [0.0, 0.0, 1.0], v: [0.0, 1.0, 0.0], w: z1 - z0, h: y1 - y0, tex: 1, leaves: &[3], lit: true });
+    // parede do fundo da última sala (normal -X: u=Z, v=Y => z×y = -X)
+    let (end_x, end_leaf): (f32, &'static [usize]) = match rooms {
+        1 => (0.0, &[1]),
+        2 => (512.0, &[2]),
+        _ => (1024.0, &[3]),
+    };
+    q.push(Quad { origin: [end_x, y0, z0], u: [0.0, 0.0, 1.0], v: [0.0, 1.0, 0.0], w: z1 - z0, h: y1 - y0, tex: 1, leaves: end_leaf, lit: true });
     // paredes com porta (vão de 128 de largura, 160 de altura) em x=0 (A|B) e x=512 (B|C)
-    for (x, leaves) in [(0.0f32, &[1usize, 2][..]), (512.0, &[2, 3][..])] {
+    for (x, leaves) in [(0.0f32, &[1usize, 2][..]), (512.0, &[2, 3][..])].into_iter().take(rooms.saturating_sub(1)) {
         // dois pedaços laterais (normal +X: u=Y, v=Z)
         q.push(Quad { origin: [x, y0, z0], u: [0.0, 1.0, 0.0], v: [0.0, 0.0, 1.0], w: 192.0, h: z1 - z0, tex: 1, leaves, lit: true });
         q.push(Quad { origin: [x, 64.0, z0], u: [0.0, 1.0, 0.0], v: [0.0, 0.0, 1.0], w: y1 - 64.0, h: z1 - z0, tex: 1, leaves, lit: true });
@@ -202,19 +222,36 @@ fn room_quads() -> Vec<Quad> {
             q.push(Quad { origin: [x + 4.0, -64.0, z0], u: [0.0, 1.0, 0.0], v: [0.0, 0.0, 1.0], w: 128.0, h: 160.0, tex: 4, leaves, lit: false });
         }
     }
-    // caixote no meio da sala B: tampo + 4 lados (cubo de 96)
-    let (cx, cy, s) = (192.0f32, -48.0f32, 96.0f32);
-    q.push(Quad { origin: [cx, cy, s], u: [1.0, 0.0, 0.0], v: [0.0, 1.0, 0.0], w: s, h: s, tex: 2, leaves: &[2], lit: true });
-    q.push(Quad { origin: [cx, cy, 0.0], u: [0.0, 0.0, 1.0], v: [1.0, 0.0, 0.0], w: s, h: s, tex: 2, leaves: &[2], lit: true });
-    q.push(Quad { origin: [cx, cy + s, 0.0], u: [1.0, 0.0, 0.0], v: [0.0, 0.0, 1.0], w: s, h: s, tex: 2, leaves: &[2], lit: true });
-    q.push(Quad { origin: [cx, cy, 0.0], u: [0.0, 1.0, 0.0], v: [0.0, 0.0, 1.0], w: s, h: s, tex: 2, leaves: &[2], lit: true });
-    q.push(Quad { origin: [cx + s, cy, 0.0], u: [0.0, 0.0, 1.0], v: [0.0, 1.0, 0.0], w: s, h: s, tex: 2, leaves: &[2], lit: true });
+    // caixote no meio da sala B, plataforma na sala A e escada na sala C (alturas variadas
+    // para a planta e o 3D mostrarem andares diferentes)
+    if rooms >= 2 {
+        boxq(&mut q, 192.0, -48.0, 96.0, 96.0, 96.0, 2, &[2]);
+    }
+    boxq(&mut q, -400.0, -170.0, 150.0, 130.0, 48.0, 3, &[1]);
+    boxq(&mut q, -360.0, -150.0, 70.0, 90.0, 96.0, 2, &[1]);
+    if rooms >= 3 {
+        for (i, h) in [32.0f32, 64.0, 96.0].into_iter().enumerate() {
+            boxq(&mut q, 620.0 + i as f32 * 70.0, -200.0, 70.0, 400.0, h, 0, &[3]);
+        }
+    }
     q
 }
 
+/// Caixa com as 5 faces visíveis (topo + 4 lados), normais para fora.
+#[allow(clippy::too_many_arguments)]
+fn boxq(q: &mut Vec<Quad>, x: f32, y: f32, w: f32, d: f32, h: f32, tex: usize, leaves: &'static [usize]) {
+    let quad = |origin: V3, u: V3, v: V3, qw: f32, qh: f32| Quad { origin, u, v, w: qw, h: qh, tex, leaves, lit: true };
+    q.push(quad([x, y, h], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], w, d)); // topo +Z
+    q.push(quad([x, y, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0], w, h)); // lado sul, normal -Y
+    q.push(quad([x, y + d, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0], h, w)); // lado norte, normal +Y
+    q.push(quad([x, y, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0], h, d)); // lado oeste, normal -X
+    q.push(quad([x + w, y, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], d, h)); // lado leste, normal +X
+}
+
 /// luz pontual: posição, cor (0..1) e raio
-const LIGHTS: [(usize, V3, V3, f32); 4] = [
+const LIGHTS: [(usize, V3, V3, f32); 5] = [
     (1, [-256.0, 0.0, 200.0], [1.0, 0.82, 0.55], 520.0),
+    (1, [-440.0, -190.0, 120.0], [0.45, 0.6, 1.0], 300.0),
     (2, [256.0, 0.0, 210.0], [0.75, 0.88, 1.0], 560.0),
     (2, [64.0, 120.0, 90.0], [1.0, 0.6, 0.4], 260.0),
     (3, [768.0, 0.0, 200.0], [0.7, 1.0, 0.7], 520.0),
@@ -228,7 +265,7 @@ fn lightmap_of(quad: &Quad) -> (usize, usize, Vec<u8>) {
     for j in 0..lh {
         for i in 0..lw {
             let p = add(quad.origin, add(scale(quad.u, (i * 16) as f32), scale(quad.v, (j * 16) as f32)));
-            let mut rgb = [0.16f32, 0.17f32, 0.2f32]; // ambiente
+            let mut rgb = [0.17f32, 0.18f32, 0.22f32]; // ambiente
             for (leaf, pos, color, radius) in LIGHTS {
                 if !quad.leaves.contains(&leaf) {
                     continue;
@@ -238,10 +275,11 @@ fn lightmap_of(quad: &Quad) -> (usize, usize, Vec<u8>) {
                 if dist > radius {
                     continue;
                 }
-                let lambert = dot(n, scale(to, 1.0 / dist.max(1e-3))).max(0.0);
+                // a parede divisória pertence às duas salas: ilumina pelos dois lados
+                let lambert = dot(n, scale(to, 1.0 / dist.max(1e-3))).abs();
                 let fall = (1.0 - dist / radius).powi(2);
                 for c in 0..3 {
-                    rgb[c] += color[c] * lambert * fall * 1.1;
+                    rgb[c] += color[c] * lambert * fall * 1.6;
                 }
             }
             for c in rgb {
@@ -260,24 +298,46 @@ pub struct Options {
     /// põe um spawn dentro da parede da sala A
     pub spawn_in_wall: bool,
     pub version: i32,
+    /// quantas salas (1 a 3) o mapa tem
+    pub rooms: usize,
+    /// inclui hostage_entity (para `cs_`) / func_vip_safetyzone + info_vip_start (para `as_`)
+    pub objectives: bool,
+    /// inclui na tabela uma textura sem pixels (a do WAD `externa`)
+    pub external_texture: bool,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Self { vis: true, lighting: true, spawn_in_wall: false, version: GOLDSRC_VERSION }
+        Self { vis: true, lighting: true, spawn_in_wall: false, version: GOLDSRC_VERSION, rooms: 3, objectives: false, external_texture: false }
+    }
+}
+
+impl Options {
+    fn max_x(&self) -> f32 {
+        match self.rooms {
+            1 => 0.0,
+            2 => 512.0,
+            _ => 1024.0,
+        }
     }
 }
 
 pub fn entities_text(opts: Options) -> String {
     let mut t = String::new();
-    t.push_str("{\n\"classname\" \"worldspawn\"\n\"message\" \"Museu de Testes\"\n\"skyname\" \"desert\"\n\"wad\" \"\\half-life\\valve\\halflife.wad\"\n}\n");
-    for i in 0..8 {
-        let y = -200 + i * 56;
+    t.push_str("{\n\"classname\" \"worldspawn\"\n\"message\" \"Museu de Testes\"\n\"skyname\" \"desert\"\n\"wad\" \"\\half-life\\valve\\halflife.wad;\\museu\\museu.wad\"\n}\n");
+    for i in 0..16 {
+        let y = -230 + (i / 2) * 64;
         t.push_str(&format!("{{\n\"classname\" \"info_player_start\"\n\"origin\" \"{} {} 36\"\n\"angles\" \"0 0 0\"\n}}\n", -420 + (i % 2) * 70, y));
     }
-    for i in 0..8 {
-        let y = -200 + i * 56;
-        t.push_str(&format!("{{\n\"classname\" \"info_player_deathmatch\"\n\"origin\" \"{} {} 36\"\n\"angles\" \"0 180 0\"\n}}\n", 940 - (i % 2) * 70, y));
+    for i in 0..16 {
+        let y = -230 + (i / 2) * 64;
+        let x = opts.max_x() as i32 - 84 - (i % 2) * 70;
+        t.push_str(&format!("{{\n\"classname\" \"info_player_deathmatch\"\n\"origin\" \"{x} {y} 36\"\n\"angles\" \"0 180 0\"\n}}\n"));
+    }
+    if opts.objectives {
+        t.push_str("{\n\"classname\" \"hostage_entity\"\n\"origin\" \"-100 80 4\"\n}\n");
+        t.push_str("{\n\"classname\" \"info_vip_start\"\n\"origin\" \"-380 0 36\"\n}\n");
+        t.push_str("{\n\"classname\" \"func_vip_safetyzone\"\n\"origin\" \"-100 0 64\"\n}\n");
     }
     if opts.spawn_in_wall {
         t.push_str("{\n\"classname\" \"info_player_start\"\n\"origin\" \"-300 400 36\"\n}\n");
@@ -287,12 +347,13 @@ pub fn entities_text(opts: Options) -> String {
     for (i, (x, y)) in [(-256, 0), (256, 0), (64, 120), (768, 0)].iter().enumerate() {
         t.push_str(&format!("{{\n\"classname\" \"light\"\n\"origin\" \"{x} {y} 200\"\n\"_light\" \"255 220 180 300\"\n\"targetname\" \"luz{i}\"\n}}\n"));
     }
+    t.push_str("{\n\"classname\" \"env_sprite\"\n\"model\" \"sprites/glow01.spr\"\n\"origin\" \"64 120 90\"\n}\n");
     t.push_str("{\n\"classname\" \"ambient_generic\"\n\"message\" \"ambience/hum.wav\"\n\"origin\" \"256 0 128\"\n}\n");
     t
 }
 
 pub fn museum_bsp(opts: Options) -> Vec<u8> {
-    let quads = room_quads();
+    let quads = room_quads(opts.rooms.clamp(1, 3));
     let mut lumps: Vec<Vec<u8>> = vec![Vec::new(); LUMP_COUNT];
 
     let mut ents = entities_text(opts).into_bytes();
@@ -359,7 +420,7 @@ pub fn museum_bsp(opts: Options) -> Vec<u8> {
     edges.extend_from_slice(&lumps[LUMP_EDGES]);
     lumps[LUMP_EDGES] = edges;
 
-    lumps[LUMP_TEXTURES] = textures_lump();
+    lumps[LUMP_TEXTURES] = textures_lump(opts.external_texture);
 
     // planos: normais +Y +Y +Z +Z +X +X +X +X  em (256, -256, 256, 0, 1024, -512, 0, 512)
     let planes: [(V3, f32); 8] = [
@@ -427,7 +488,7 @@ pub fn museum_bsp(opts: Options) -> Vec<u8> {
     // modelo 0
     {
         let m = &mut lumps[LUMP_MODELS];
-        for k in [-512.0f32, -256.0, 0.0, 1024.0, 256.0, 256.0] {
+        for k in [-512.0f32, -256.0, 0.0, opts.max_x(), 256.0, 256.0] {
             m.extend_from_slice(&k.to_le_bytes());
         }
         m.extend_from_slice(&[0u8; 12]); // origin

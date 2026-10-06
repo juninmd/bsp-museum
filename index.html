@@ -75,23 +75,23 @@
 
     <section id="resources" class="resources" hidden aria-live="polite">
       <div class="res-toolbar">
-        <button id="res-pick">escolher pasta do mod…</button>
+        <button id="res-pick" data-i18n="mdl.pick">escolher pasta do mod…</button>
         <span id="res-root" class="dim"></span>
       </div>
       <div class="res-layout">
-        <div class="res-col" id="res-dirs" aria-label="pastas com modelos"></div>
-        <div class="res-col" id="res-files" aria-label="arquivos .mdl"></div>
+        <div class="res-col" id="res-dirs" aria-label="pastas com modelos" data-i18n-aria="mdl.dirsAria"></div>
+        <div class="res-col" id="res-files" aria-label="arquivos .mdl" data-i18n-aria="mdl.filesAria"></div>
         <div class="res-viewer-wrap">
           <div class="res-viewer-toolbar" id="res-viewer-toolbar" hidden>
             <label class="chk-seq">
-              sequência
+              <span data-i18n="mdl.sequence">sequência</span>
               <select id="res-sequence"></select>
             </label>
-            <button id="res-play" type="button">tocar</button>
-            <input id="res-frame" type="range" min="0" max="0" step="1" value="0" aria-label="quadro" />
+            <button id="res-play" type="button" data-i18n="mdl.play">tocar</button>
+            <input id="res-frame" type="range" min="0" max="0" step="1" value="0" aria-label="quadro" data-i18n-aria="mdl.frame" />
             <span id="res-frame-label" class="hintc">–</span>
             <label class="chk-seq">
-              velocidade
+              <span data-i18n="mdl.speed">velocidade</span>
               <select id="res-speed">
                 <option value="0.25">0,25×</option>
                 <option value="0.5">0,5×</option>
@@ -100,7 +100,7 @@
               </select>
             </label>
             <label class="chk-seq" id="res-skin-wrap" hidden>
-              skin
+              <span data-i18n="mdl.skin">skin</span>
               <select id="res-skin"></select>
             </label>
             <span id="res-anim-note" class="hintc"></span>

@@ -154,7 +154,7 @@ pub fn bmp_png(data: &[u8]) -> Option<String> {
     }
     let out_len = w.checked_mul(h)?.checked_mul(4)?;
 
-    let stride = ((w * channels + 3) / 4) * 4;
+    let stride = (w * channels).div_ceil(4) * 4;
     let mut out = vec![0u8; out_len];
     for r in 0..h {
         let src_row = if top_down { r } else { h - 1 - r };

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { t } from "./i18n.ts";
 import { mountModelViewer3D, type ModelViewer } from "./model-viewer.ts";
 import type { MdlSeqFrames, MdlSummary } from "./types.ts";
 
@@ -63,8 +64,8 @@ function bindAnimation(viewer: ModelViewer, model: MdlSummary, path: string): { 
 
   function setPlaying(value: boolean) {
     playing = value;
-    playBtn.textContent = value ? "pausar" : "tocar";
-    playBtn.setAttribute("aria-label", value ? "pausar animação" : "tocar animação");
+    playBtn.textContent = value ? t("mdl.pause") : t("mdl.play");
+    playBtn.setAttribute("aria-label", value ? t("mdl.pauseAria") : t("mdl.playAria"));
   }
 
   function setEnabled(value: boolean) {
@@ -131,7 +132,7 @@ function bindAnimation(viewer: ModelViewer, model: MdlSummary, path: string): { 
 
   async function selectSequence(index: number) {
     const mine = ++token;
-    note.textContent = "carregando…";
+    note.textContent = t("common.loading");
     note.title = "";
     let loaded = cache.get(index);
     if (!loaded) {
@@ -146,7 +147,7 @@ function bindAnimation(viewer: ModelViewer, model: MdlSummary, path: string): { 
         setPlaying(false);
         setEnabled(false);
         frameLabel.textContent = "–";
-        note.textContent = "animação indisponível";
+        note.textContent = t("mdl.unavailable");
         note.title = String(err);
         viewer.setVertexPositions(model.positions);
         return;
@@ -158,7 +159,7 @@ function bindAnimation(viewer: ModelViewer, model: MdlSummary, path: string): { 
     frameInput.max = String(Math.max(0, pose.frames - 1));
     setEnabled(pose.frames > 1);
     setPlaying(pose.frames > 1);
-    note.textContent = pose.looping ? "em loop" : "uma vez";
+    note.textContent = pose.looping ? t("mdl.loop") : t("mdl.once");
     render();
   }
 
@@ -180,7 +181,7 @@ function bindAnimation(viewer: ModelViewer, model: MdlSummary, path: string): { 
   }
 
   seqSel.replaceChildren();
-  model.sequence_info.forEach((info, i) => seqSel.append(new Option(info.name || `sequência ${i}`, String(i))));
+  model.sequence_info.forEach((info, i) => seqSel.append(new Option(info.name || t("mdl.seqN", i), String(i))));
   seqSel.addEventListener("change", () => void selectSequence(Number(seqSel.value)), on);
 
   playBtn.addEventListener(
@@ -206,7 +207,7 @@ function bindAnimation(viewer: ModelViewer, model: MdlSummary, path: string): { 
 
   // Skin: só aparece se o modelo tem mais de uma família.
   skinSel.replaceChildren();
-  model.skin_families.forEach((_, i) => skinSel.append(new Option(`skin ${i + 1}`, String(i))));
+  model.skin_families.forEach((_, i) => skinSel.append(new Option(t("mdl.skinN", i + 1), String(i))));
   skinWrap.hidden = model.skin_families.length < 2;
   skinSel.addEventListener("change", () => viewer.setTextureMap(model.skin_families[Number(skinSel.value)] ?? []), on);
 

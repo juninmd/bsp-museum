@@ -28,7 +28,6 @@ pub const LUMP_NODES: usize = 5;
 pub const LUMP_TEXINFO: usize = 6;
 pub const LUMP_FACES: usize = 7;
 pub const LUMP_LIGHTING: usize = 8;
-pub const LUMP_CLIPNODES: usize = 9;
 pub const LUMP_LEAVES: usize = 10;
 pub const LUMP_MARKSURFACES: usize = 11;
 pub const LUMP_EDGES: usize = 12;
@@ -196,14 +195,6 @@ impl Bsp {
             *lump = Lump { offset: offset as usize, length: length as usize };
         }
         Ok((version, lumps))
-    }
-
-    /// Só o lump de entidades e o modelo 0 — o suficiente para o catálogo.
-    pub fn parse_light(data: &[u8]) -> Result<(String, Option<Model>, [Lump; LUMP_COUNT])> {
-        let (_, lumps) = Self::header(data)?;
-        let entities_raw = read_entities(data, lumps[LUMP_ENTITIES])?;
-        let models = read_models(data, lumps[LUMP_MODELS])?;
-        Ok((entities_raw, models.first().copied(), lumps))
     }
 
     pub fn parse(data: &[u8]) -> Result<Bsp> {
@@ -476,6 +467,7 @@ pub struct TextureImage {
 /// `texindex` é o índice **cru** da tabela de texturas (mesmo número que o
 /// texinfo guarda), não a posição na lista compactada — que pula WADs externos.
 /// Textura com offset `-1` (vem de WAD) ou com mip ausente devolve `None`.
+#[cfg(test)]
 pub fn texture_image(data: &[u8], lump: Lump, texindex: usize) -> Option<TextureImage> {
     texture_image_for(data, lump, texindex, false)
 }

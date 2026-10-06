@@ -1,11 +1,11 @@
-//! Árvore BSP: classificar um ponto numa folha e ler o PVS (visibilidade).
+//! Árvore BSP: classificar um ponto numa folha (diagnóstico de spawn em sólido).
 //!
-//! Serve a dois consumidores: o diagnóstico (spawn dentro de sólido) e o
-//! viewer 3D (só desenhar o que a folha da câmera enxerga). Tudo checado:
-//! índice fora da faixa ou ciclo na árvore vira `None`, nunca panic ou loop.
+//! O PVS (visibilidade) é lido no frontend (`src/lib/pvs.ts`), que é quem desenha.
+//! Tudo checado: índice fora da faixa ou ciclo na árvore vira `None`, nunca panic ou loop.
 
-use super::{Bsp, Leaf};
+use super::Bsp;
 
+#[cfg(test)]
 pub const CONTENTS_EMPTY: i32 = -1;
 pub const CONTENTS_SOLID: i32 = -2;
 
@@ -33,59 +33,12 @@ impl Bsp {
         let leaf = self.leaf_at(model.headnode, p)?;
         Some(self.leaves.get(leaf)?.contents)
     }
-
-    /// Folhas visíveis a partir de `leaf` (índice na lista de folhas, onde a 0 é
-    /// o "fora do mundo"). `None` quando o mapa não tem vis para essa folha —
-    /// quem chama deve tratar como "tudo visível".
-    pub fn visible_leaves(&self, leaf: usize) -> Option<Vec<bool>> {
-        let info: &Leaf = self.leaves.get(leaf)?;
-        if info.visofs < 0 || self.visibility.is_empty() {
-            return None;
-        }
-        let model = self.models.first()?;
-        let count = usize::try_from(model.visleafs).ok()?;
-        if count == 0 || count + 1 > self.leaves.len() {
-            return None;
-        }
-        let row = decompress_vis(&self.visibility, info.visofs as usize, count.div_ceil(8))?;
-        let mut out = vec![false; self.leaves.len()];
-        // bit i da linha = folha i + 1 (a folha 0 não entra no PVS)
-        for i in 0..count {
-            if row[i >> 3] & (1 << (i & 7)) != 0 {
-                out[i + 1] = true;
-            }
-        }
-        out[leaf] = true;
-        Some(out)
-    }
-}
-
-/// Descomprime uma linha de PVS: byte ≠ 0 passa direto; 0 é seguido do número de
-/// bytes zero a pular (RLE do `vis`).
-pub fn decompress_vis(vis: &[u8], offset: usize, row_bytes: usize) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(row_bytes);
-    let mut at = offset;
-    while out.len() < row_bytes {
-        let b = *vis.get(at)?;
-        at += 1;
-        if b != 0 {
-            out.push(b);
-            continue;
-        }
-        let run = *vis.get(at)? as usize;
-        at += 1;
-        if run == 0 {
-            return None; // corrido: zero seguido de zero nunca termina
-        }
-        out.extend(std::iter::repeat(0u8).take(run.min(row_bytes - out.len())));
-    }
-    Some(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bsp::{Model, Node, Plane};
+    use crate::bsp::{Leaf, Model, Node, Plane};
 
     /// Duas salas separadas por um plano x=0: folha 1 (x<0) e folha 2 (x>0),
     /// mais a folha 0 (fora do mundo, sólida).
@@ -128,27 +81,5 @@ mod tests {
         assert_eq!(bsp.leaf_at(0, [1.0, 0.0, 0.0]), None);
         assert_eq!(bsp.leaf_at(7, [1.0, 0.0, 0.0]), None);
         assert_eq!(Bsp::default().contents_at([0.0; 3]), None);
-    }
-
-    #[test]
-    fn pvs_le_a_linha_da_folha() {
-        let bsp = two_rooms();
-        let from1 = bsp.visible_leaves(1).unwrap();
-        assert_eq!(from1, vec![false, true, false]);
-        let from2 = bsp.visible_leaves(2).unwrap();
-        assert_eq!(from2, vec![false, true, true]);
-        assert!(bsp.visible_leaves(0).is_none(), "folha 0 não tem vis");
-    }
-
-    #[test]
-    fn rle_do_vis_expande_zeros() {
-        // 0xFF, depois 3 bytes zero, depois 0x01
-        let row = decompress_vis(&[0xFF, 0, 3, 0x01], 0, 5).unwrap();
-        assert_eq!(row, vec![0xFF, 0, 0, 0, 0x01]);
-        // run que estoura o tamanho da linha é cortada, não panica
-        assert_eq!(decompress_vis(&[0, 200], 0, 4).unwrap(), vec![0, 0, 0, 0]);
-        // truncado e zero-zero viram None
-        assert!(decompress_vis(&[0xFF], 0, 4).is_none());
-        assert!(decompress_vis(&[0, 0], 0, 4).is_none());
     }
 }

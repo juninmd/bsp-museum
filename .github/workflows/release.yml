@@ -1,0 +1,51 @@
+name: Release
+
+# Gera os instaladores (Windows, Linux, macOS) ao empurrar uma tag `vX.Y.Z`.
+# A atualização automática (tauri-plugin-updater) não está ligada: ela exige um par de
+# chaves de assinatura e um endpoint de publicação que só o mantenedor pode criar.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: Windows, os: windows-latest }
+          - { label: Linux, os: ubuntu-22.04 }
+          - { label: macOS (Apple Silicon), os: macos-latest, args: "--target aarch64-apple-darwin" }
+          - { label: macOS (Intel), os: macos-13, args: "--target x86_64-apple-darwin" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependências do Tauri (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev librsvg2-dev patchelf
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "bsp-museum ${{ github.ref_name }}"
+          releaseDraft: true
+          args: ${{ matrix.args }}

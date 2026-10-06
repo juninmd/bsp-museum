@@ -3,7 +3,8 @@ import type { AuditReport, AuditRow, ResourceReport, Severity } from "../types.t
 
 export function fmtSize(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${Math.round(bytes / 1024)} KB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
 }
 
 const RANK: Record<Severity, number> = { critical: 0, warn: 1, info: 2 };

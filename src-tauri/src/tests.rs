@@ -1329,8 +1329,8 @@ fn diagnostica_chao_ceu() {
             other += 1;
             continue;
         }
-        let (uax, uay, uaz) = (*b.0 - *a.0, *b.1 - *a.1, *b.2 - *a.2);
-        let (ubx, uby, ubz) = (*c.0 - *a.0, *c.1 - *a.1, *c.2 - *a.2);
+        let (uax, _uay, uaz) = (*b.0 - *a.0, *b.1 - *a.1, *b.2 - *a.2);
+        let (ubx, _uby, ubz) = (*c.0 - *a.0, *c.1 - *a.1, *c.2 - *a.2);
         let ny = uaz * ubx - uax * ubz; // componente Y do cross product
         if ny < 0.0 {
             down += 1;

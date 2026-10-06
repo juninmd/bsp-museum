@@ -35,15 +35,13 @@ fn spawns_da_fixture_estao_em_espaco_vazio() {
 }
 
 #[test]
-fn pvs_da_sala_a_nao_ve_a_sala_c() {
+fn folhas_da_fixture_batem_com_as_salas() {
     let bsp = Bsp::parse(&museum_bsp(Options::default())).unwrap();
-    let leaf_a = bsp.leaf_at(0, [-300.0, 0.0, 40.0]).unwrap();
-    assert_eq!(leaf_a, 1);
-    let vis = bsp.visible_leaves(leaf_a).unwrap();
-    assert!(vis[1] && vis[2], "A vê A e B");
-    assert!(!vis[3], "A não vê C");
-    let leaf_c = bsp.leaf_at(0, [800.0, 0.0, 40.0]).unwrap();
-    assert!(!bsp.visible_leaves(leaf_c).unwrap()[1], "C não vê A");
+    assert_eq!(bsp.leaf_at(0, [-300.0, 0.0, 40.0]), Some(1));
+    assert_eq!(bsp.leaf_at(0, [300.0, 0.0, 40.0]), Some(2));
+    assert_eq!(bsp.leaf_at(0, [800.0, 0.0, 40.0]), Some(3));
+    // uma linha de vis (1 byte) por folha não sólida
+    assert_eq!(bsp.visibility, vec![0b011, 0b111, 0b110]);
 }
 
 #[test]
@@ -94,6 +92,65 @@ fn bsp_do_quake_v29_abre() {
     assert_eq!(summary.bsp_version, 29);
     let mesh = catalog::mesh(&path).unwrap();
     assert!(mesh.triangles > 0);
+}
+
+/// WAD3 mínimo só com o diretório (nomes de lump `'C'`): é tudo que o diagnóstico lê.
+fn wad_com(names: &[&str]) -> Vec<u8> {
+    let mut out = b"WAD3".to_vec();
+    out.extend_from_slice(&(names.len() as u32).to_le_bytes());
+    out.extend_from_slice(&12u32.to_le_bytes());
+    for name in names {
+        out.extend_from_slice(&0u32.to_le_bytes()); // filepos
+        out.extend_from_slice(&0u32.to_le_bytes()); // disksize
+        out.extend_from_slice(&0u32.to_le_bytes()); // size
+        out.push(0x43); // tipo miptex
+        out.extend_from_slice(&[0u8; 3]);
+        let mut raw = [0u8; 16];
+        raw[..name.len()].copy_from_slice(name.as_bytes());
+        out.extend_from_slice(&raw);
+    }
+    out
+}
+
+#[test]
+fn textura_so_de_wad_e_conferida_nos_wads_achados() {
+    let path = write_map("wadtex", "de_wad", Options { external_texture: true, ..Options::default() });
+    let wad_path = path.parent().unwrap().parent().unwrap().join("museu.wad");
+    let run = || {
+        catalog::detail(&path, crate::bsp::render::RenderOptions::thumbnail(), 2)
+            .unwrap()
+            .findings
+            .into_iter()
+            .find(|f| f.id == "textura-ausente")
+    };
+
+    // WAD sem a textura: achado, com o nome
+    std::fs::write(&wad_path, wad_com(&["outra"])).unwrap();
+    let f = run().expect("textura ausente");
+    assert!(f.detail.contains("externa"), "{}", f.detail);
+
+    // WAD com a textura (nome em maiúsculas: a busca ignora caixa): some o achado
+    std::fs::write(&wad_path, wad_com(&["EXTERNA"])).unwrap();
+    assert!(run().is_none());
+}
+
+#[test]
+fn indice_de_wad_recusa_arquivo_corrompido() {
+    let dir = std::env::temp_dir().join(format!("bspm-wadidx-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let bom = dir.join("bom.wad");
+    std::fs::write(&bom, wad_com(&["a", "b"])).unwrap();
+    let names = crate::bsp::wad::texture_names(&bom).unwrap();
+    assert!(names.contains("a") && names.contains("b") && names.len() == 2);
+
+    let ruim = dir.join("ruim.wad");
+    let mut bytes = wad_com(&["a"]);
+    bytes[4..8].copy_from_slice(&u32::MAX.to_le_bytes()); // número de lumps absurdo
+    std::fs::write(&ruim, bytes).unwrap();
+    assert!(crate::bsp::wad::texture_names(&ruim).is_none());
+
+    std::fs::write(dir.join("lixo.wad"), b"nao sou wad").unwrap();
+    assert!(crate::bsp::wad::texture_names(&dir.join("lixo.wad")).is_none());
 }
 
 #[test]
@@ -165,7 +222,7 @@ fn comparacao_aponta_diferencas_de_lump_e_entidade() {
     let c = crate::compare::compare(&a, &b, 2).unwrap();
     assert!(c.lumps.iter().any(|d| d.name == "lighting" && d.a > 0 && d.b == 0));
     let spawn = c.entities.iter().find(|d| d.name == "info_player_start").expect("spawn extra");
-    assert_eq!((spawn.a, spawn.b), (8, 9));
+    assert_eq!((spawn.a, spawn.b), (16, 17));
     assert!(c.b.fullbright && !c.a.fullbright);
     assert!(c.b.findings.iter().any(|(id, _)| id == "spawn-em-solido"));
 }
@@ -180,4 +237,90 @@ fn lista_de_entidades_traz_origem_e_chaves() {
     assert_eq!(buy.targetname.as_deref(), Some("loja_ct"));
     assert_eq!(buy.origin, Some([-256.0, 0.0, 64.0]));
     assert!(buy.keys.iter().any(|(k, _)| k == "targetname"));
+}
+
+// ------------------------------------------------------------------------------
+// Dados das capturas de tela do README (não roda no `cargo test` normal):
+//   FIXTURE_DIR=/tmp/fx cargo test gerar_dados_das_capturas -- --ignored
+// Monta um acervo sintético e grava, em JSON, exatamente o que os comandos do
+// backend devolveriam — o script `scripts/screenshots.mjs` serve isso ao frontend.
+
+#[test]
+#[ignore = "gera dados para as capturas: FIXTURE_DIR=<pasta> cargo test gerar_dados_das_capturas -- --ignored"]
+fn gerar_dados_das_capturas() {
+    use crate::bsp::render::RenderOptions;
+    let out = PathBuf::from(std::env::var("FIXTURE_DIR").expect("defina FIXTURE_DIR"));
+    let maps_dir = out.join("cstrike").join("maps");
+    std::fs::create_dir_all(&maps_dir).unwrap();
+
+    // arquivos auxiliares que o mapa referencia (conteúdo dummy: só o tamanho importa)
+    let cs = out.join("cstrike");
+    for (rel, size) in [("sound/ambience/hum.wav", 48_000usize), ("sprites/glow01.spr", 6_000)] {
+        let p = cs.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, vec![0u8; size]).unwrap();
+    }
+    // WAD3 válido e vazio: o app o encontra, mas nenhuma textura do mapa depende dele
+    let mut wad = b"WAD3".to_vec();
+    wad.extend_from_slice(&0u32.to_le_bytes());
+    wad.extend_from_slice(&12u32.to_le_bytes());
+    std::fs::write(cs.join("museu.wad"), wad).unwrap();
+
+    let base = Options::default();
+    let variants: Vec<(&str, Options)> = vec![
+        ("de_museu", base),
+        ("de_museu_copia", base),
+        ("de_leak", Options { vis: false, ..base }),
+        ("de_parede", Options { spawn_in_wall: true, rooms: 2, ..base }),
+        ("cs_sem_refens", Options { rooms: 2, ..base }),
+        ("as_incompleto", Options { rooms: 2, ..base }),
+        ("zm_escuro", Options { lighting: false, rooms: 1, ..base }),
+        ("cs_resgate", Options { rooms: 2, objectives: true, ..base }),
+    ];
+    for (name, opts) in &variants {
+        std::fs::write(maps_dir.join(format!("{name}.bsp")), museum_bsp(*opts)).unwrap();
+    }
+
+    let put = |file: &str, text: String| std::fs::write(out.join(file), text).unwrap();
+    let json = |v: &dyn erased::Ser| v.to_json();
+
+    let mut cache = catalog::IndexCache::default();
+    let (scan, _) = catalog::scan_cached(&out.join("cstrike"), &mut cache);
+    put("scan.json", json(&scan));
+
+    for (name, _) in &variants {
+        let path = maps_dir.join(format!("{name}.bsp"));
+        let detail = catalog::detail(&path, RenderOptions::detail(), 32).unwrap();
+        put(&format!("detail-{name}.json"), json(&detail));
+        put(&format!("thumb-{name}.svg"), catalog::thumbnail(&path).unwrap());
+    }
+    for name in ["de_museu", "de_parede"] {
+        let path = maps_dir.join(format!("{name}.bsp"));
+        put(&format!("mesh-{name}.json"), json(&catalog::mesh(&path).unwrap()));
+        let bytes = std::fs::read(&path).unwrap();
+        let bsp = Bsp::parse(&bytes).unwrap();
+        let parsed = crate::bsp::entities::parse(&bsp.entities_raw);
+        put(&format!("entities-{name}.json"), json(&crate::entity_list::list(&bsp, &parsed)));
+        let radar = crate::radar::render(&bsp, 512).unwrap();
+        use base64::Engine as _;
+        let png = base64::engine::general_purpose::STANDARD.encode(radar.png().unwrap());
+        put(&format!("radar-{name}.txt"), format!("data:image/png;base64,{png}"));
+    }
+    put("audit.json", json(&crate::audit::run(&out.join("cstrike"), 32)));
+    let a = maps_dir.join("de_museu.bsp");
+    let b = maps_dir.join("de_parede.bsp");
+    put("compare.json", json(&crate::compare::compare(&a, &b, 32).unwrap()));
+    put("maps_dir.txt", out.join("cstrike").to_string_lossy().to_string());
+}
+
+mod erased {
+    /// `serde_json::to_string` sem precisar nomear o tipo em cada chamada.
+    pub trait Ser {
+        fn to_json(&self) -> String;
+    }
+    impl<T: serde::Serialize> Ser for T {
+        fn to_json(&self) -> String {
+            serde_json::to_string(self).unwrap()
+        }
+    }
 }

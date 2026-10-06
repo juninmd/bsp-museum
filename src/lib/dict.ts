@@ -99,6 +99,28 @@ export const DICT: Record<string, [string, string]> = {
   "rule.recurso-ausente": ["recurso ausente", "missing resource"],
   "rule.erro-leitura": ["erro de leitura", "read error"],
 
+  // aba Recursos (.mdl)
+  "mdl.pick": ["escolher pasta do mod…", "choose mod folder…"],
+  "mdl.pickTitle": ["pasta do mod (ou de models/)", "mod folder (or models/)"],
+  "mdl.dirsAria": ["pastas com modelos", "model folders"],
+  "mdl.filesAria": ["arquivos .mdl", ".mdl files"],
+  "mdl.noneFound": ["Nenhum .mdl encontrado nessa pasta.", "No .mdl found in that folder."],
+  "mdl.emptyDir": ["Pasta vazia.", "Empty folder."],
+  "mdl.decoding": ["decodificando modelo…", "decoding model…"],
+  "mdl.sequence": ["sequência", "sequence"],
+  "mdl.seqN": ["sequência {0}", "sequence {0}"],
+  "mdl.play": ["tocar", "play"],
+  "mdl.pause": ["pausar", "pause"],
+  "mdl.playAria": ["tocar animação", "play animation"],
+  "mdl.pauseAria": ["pausar animação", "pause animation"],
+  "mdl.frame": ["quadro", "frame"],
+  "mdl.speed": ["velocidade", "speed"],
+  "mdl.skin": ["skin", "skin"],
+  "mdl.skinN": ["skin {0}", "skin {0}"],
+  "mdl.unavailable": ["animação indisponível", "animation unavailable"],
+  "mdl.loop": ["em loop", "looping"],
+  "mdl.once": ["uma vez", "plays once"],
+
   // detalhe
   "detail.aria": ["detalhes do mapa", "map details"],
   "detail.reading": ["lendo {0}…", "reading {0}…"],

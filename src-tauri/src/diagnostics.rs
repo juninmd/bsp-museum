@@ -313,9 +313,9 @@ pub fn disk_findings(
     report: &crate::resources::ResourceReport,
 ) -> Vec<Finding> {
     let mut out = Vec::new();
-    let wads = wad::WadSet::for_map(path, &ents.wads);
+    let wads = wad::declared_name_sets(path, &ents.wads);
 
-    if wads.loaded() == 0 {
+    if wads.is_empty() {
         if !ents.wads.is_empty() && bsp.textures.iter().any(|t| !t.embedded) {
             out.push(Finding::new(
                 "wad-nao-encontrado",
@@ -331,7 +331,10 @@ pub fn disk_findings(
             .textures
             .iter()
             .filter(|t| !t.embedded && !crate::bsp::render::is_invisible(&t.name) && !t.name.is_empty())
-            .filter(|t| !wads.contains(&t.name))
+            .filter(|t| {
+                let key = t.name.to_ascii_lowercase();
+                !wads.iter().any(|set| set.contains(&key))
+            })
             .map(|t| t.name.clone())
             .collect();
         missing.sort();

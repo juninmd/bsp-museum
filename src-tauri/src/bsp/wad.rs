@@ -74,17 +74,6 @@ impl WadSet {
         }
     }
 
-    /// Quantos `.wad` foram de fato achados e lidos no disco.
-    pub fn loaded(&self) -> usize {
-        self.wads.len()
-    }
-
-    /// Algum WAD carregado tem a textura? Barato: só consulta o índice, não decodifica pixel.
-    pub fn contains(&self, name: &str) -> bool {
-        let key = name.to_ascii_lowercase();
-        self.wads.iter().any(|w| w.index.contains_key(&key))
-    }
-
     /// PNG (data URL) para um nome de textura, ou `None` se nenhum WAD a tem.
     pub fn resolve(&mut self, name: &str) -> Option<(String, u32, u32)> {
         let key = name.to_ascii_lowercase();
@@ -105,6 +94,80 @@ impl WadSet {
         self.cache.insert(key, found.clone());
         found
     }
+}
+
+/// Nomes de textura de um WAD, lidos só do diretório (sem carregar os pixels) e
+/// memorizados por `(caminho, tamanho, data)`. A auditoria confere centenas de mapas
+/// contra os mesmos `cstrike.wad`/`halflife.wad`: sem isto cada mapa releria ~20 MB.
+pub fn texture_names(path: &Path) -> Option<std::sync::Arc<std::collections::HashSet<String>>> {
+    use std::io::{Read, Seek, SeekFrom};
+    use std::sync::{Arc, Mutex, OnceLock};
+    type Entry = (u64, u128, Arc<std::collections::HashSet<String>>);
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Entry>>> = OnceLock::new();
+
+    let meta = std::fs::metadata(path).ok()?;
+    let len = meta.len();
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some((l, m, names)) = cache.lock().ok()?.get(path) {
+        if *l == len && *m == mtime {
+            return Some(names.clone());
+        }
+    }
+
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut head = [0u8; 12];
+    file.read_exact(&mut head).ok()?;
+    if &head[0..4] != b"WAD2" && &head[0..4] != b"WAD3" {
+        return None;
+    }
+    let num_lumps = u32::from_le_bytes([head[4], head[5], head[6], head[7]]) as u64;
+    let info_ofs = u32::from_le_bytes([head[8], head[9], head[10], head[11]]) as u64;
+    // diretório fora do arquivo ou absurdo de grande = WAD corrompido
+    if num_lumps > 1_000_000 || info_ofs.checked_add(num_lumps * 32)? > len {
+        return None;
+    }
+    file.seek(SeekFrom::Start(info_ofs)).ok()?;
+    let mut dir = vec![0u8; (num_lumps * 32) as usize];
+    file.read_exact(&mut dir).ok()?;
+
+    let mut names = std::collections::HashSet::new();
+    for entry in dir.chunks_exact(32) {
+        if entry[12] != MIPTEX {
+            continue;
+        }
+        let raw = &entry[16..32];
+        let end = raw.iter().position(|&b| b == 0).unwrap_or(16);
+        let name = String::from_utf8_lossy(&raw[..end]).trim().to_ascii_lowercase();
+        if !name.is_empty() {
+            names.insert(name);
+        }
+    }
+    let names = Arc::new(names);
+    cache.lock().ok()?.insert(path.to_path_buf(), (len, mtime, names.clone()));
+    Some(names)
+}
+
+/// WADs declarados pelo mapa (+ os do jogo) que existem no disco, só como índice de nomes.
+pub fn declared_name_sets(map_path: &Path, declared: &[String]) -> Vec<std::sync::Arc<std::collections::HashSet<String>>> {
+    let mod_dir = mod_dir_of(map_path);
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for name in declared.iter().map(String::as_str).chain(["cstrike.wad", "halflife.wad"]) {
+        if let Some(path) = find_asset(&mod_dir, name) {
+            if seen.insert(path.clone()) {
+                if let Some(names) = texture_names(&path) {
+                    out.push(names);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Lê o cabeçalho do WAD e indexa os lumps de textura por nome.

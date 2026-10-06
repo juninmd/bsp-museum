@@ -45,6 +45,9 @@ function buildTextures(mesh: MeshDetail): (THREE.Texture | null)[] {
     if (!t.png) return null;
     const tex = new THREE.TextureLoader().load(t.png);
     tex.colorSpace = THREE.SRGBColorSpace;
+    // No GoldSrc o `t` do texinfo cresce para baixo: v=0 é a primeira linha do bitmap.
+    // O padrão do Three.js (flipY) espelharia a textura na vertical.
+    tex.flipY = false;
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
     tex.minFilter = THREE.LinearMipmapLinearFilter;
@@ -57,6 +60,8 @@ interface Entry {
   chunk: Chunk;
   /** índice dinâmico (PVS): só os triângulos visíveis */
   indices: Uint32Array;
+  /** triângulos ligados pelo PVS neste chunk (os que o frustum pode ainda descartar) */
+  drawn: number;
   texMaterial: THREE.MeshBasicMaterial;
 }
 
@@ -112,6 +117,7 @@ export function mount3D(
   if (mesh.lightmap && mesh.lm_uvs.length) {
     lightmapTex = new THREE.TextureLoader().load(mesh.lightmap);
     lightmapTex.colorSpace = THREE.SRGBColorSpace;
+    lightmapTex.flipY = false; // mesma convenção da textura: linha 0 do atlas em v=0
     lightmapTex.channel = 1; // uv1
     lightmapTex.minFilter = THREE.LinearFilter;
     lightmapTex.magFilter = THREE.LinearFilter;
@@ -146,7 +152,7 @@ export function mount3D(
 
     const meshObj = new THREE.Mesh(geometry, flatMaterial);
     scene.add(meshObj);
-    entries.push({ mesh: meshObj, chunk, indices, texMaterial });
+    entries.push({ mesh: meshObj, chunk, indices, drawn: triCount, texMaterial });
   }
 
   // Spawns como esferas: azul CT, laranja T, verde resto.
@@ -213,6 +219,7 @@ export function mount3D(
       const geo = e.mesh.geometry;
       geo.setDrawRange(0, n);
       geo.index!.needsUpdate = true;
+      e.drawn = n / 3;
       e.mesh.visible = n > 0;
     }
     pvsActive = flags !== null;
@@ -337,7 +344,8 @@ export function mount3D(
 
   function focusOn(position: [number, number, number]) {
     const [x, y, z] = toWorld(position[0], position[1], position[2]);
-    const reach = Math.max(120, maxDim / 14);
+    // distância de observação: perto o bastante para ver o entorno, longe o bastante para dar contexto
+    const reach = Math.min(700, Math.max(200, maxDim / 10));
     if (mode === "fps") exitFirstPerson();
     controls.target.set(x, y, z);
     camera.position.set(x + reach * 0.9, y + reach * 0.7, z + reach * 0.9);
@@ -358,6 +366,20 @@ export function mount3D(
   resize();
   const ro = new ResizeObserver(resize);
   ro.observe(container);
+
+  // Triângulos que realmente vão para a GPU: ligados pelo PVS e dentro do frustum.
+  const frustum = new THREE.Frustum();
+  const projView = new THREE.Matrix4();
+  const countDrawn = (): number => {
+    camera.updateMatrixWorld();
+    projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(projView);
+    let n = 0;
+    for (const e of entries) {
+      if (e.mesh.visible && frustum.intersectsSphere(e.mesh.geometry.boundingSphere!)) n += e.drawn;
+    }
+    return n;
+  };
 
   let statsListener: ((s: ViewerStats) => void) | null = null;
   let lastStats = 0;
@@ -380,7 +402,7 @@ export function mount3D(
     const now = performance.now();
     if (statsListener && now - lastStats > 400) {
       lastStats = now;
-      statsListener({ drawn: renderer.info.render.triangles, total: totalTriangles, leaf: currentLeaf, pvsActive });
+      statsListener({ drawn: countDrawn(), total: totalTriangles, leaf: currentLeaf, pvsActive });
     }
   };
   animate();

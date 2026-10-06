@@ -1,7 +1,7 @@
 {
   "name": "bsp-museum",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "Galeria navegável do acervo de mapas GoldSrc (Half-Life / CS 1.6).",
   "scripts": {

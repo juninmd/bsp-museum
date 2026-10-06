@@ -211,7 +211,8 @@ pub fn find_bsp_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// Varredura paralela: disco e CPU juntos, sem dependência externa.
+/// Varredura paralela sem índice persistente (os testes usam; o app usa `scan_cached`).
+#[cfg(test)]
 pub fn scan(dir: &Path) -> Vec<MapSummary> {
     let files = find_bsp_files(dir);
     let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
@@ -322,7 +323,6 @@ pub fn findings(summary: &MapSummary, ents: &EntitySummary, bsp: &Bsp, slots: us
 /// É o que o detalhe, a auditoria e a comparação compartilham.
 pub struct Analysis {
     pub bsp: Bsp,
-    pub parsed: Vec<entities::Entity>,
     pub ents: EntitySummary,
     pub summary: MapSummary,
     pub findings: Vec<Finding>,
@@ -343,7 +343,7 @@ pub fn analyze(path: &Path, slots: usize) -> Result<Analysis, String> {
     let mut findings = findings(&summary, &ents, &bsp, slots);
     findings.extend(crate::diagnostics::disk_findings(path, &ents, &bsp, &resources));
     findings.sort_by_key(|f| f.severity);
-    Ok(Analysis { bsp, parsed, ents, summary, findings, resources })
+    Ok(Analysis { bsp, ents, summary, findings, resources })
 }
 
 pub fn lump_infos(bsp: &Bsp) -> Vec<LumpInfo> {
@@ -358,12 +358,12 @@ pub fn lump_infos(bsp: &Bsp) -> Vec<LumpInfo> {
             percent: if total > 0 { l.length as f32 / total as f32 * 100.0 } else { 0.0 },
         })
         .collect();
-    lumps.sort_by(|a, b| b.length.cmp(&a.length));
+    lumps.sort_by_key(|l| std::cmp::Reverse(l.length));
     lumps
 }
 
 pub fn detail(path: &Path, opts: RenderOptions, slots: usize) -> Result<MapDetail, String> {
-    let Analysis { bsp, ents, summary, findings, resources, .. } = analyze(path, slots)?;
+    let Analysis { bsp, ents, summary, findings, resources } = analyze(path, slots)?;
     let rendered = render::top_down(&bsp, &ents.spawns, opts);
 
     let mut textures: Vec<String> = bsp.textures.iter().map(|t| t.name.clone()).collect();
@@ -493,6 +493,7 @@ fn pvs_data(bsp: &Bsp) -> Option<PvsData> {
 /// Decode de uma textura com cache: primeiro os pixels embutidos no BSP,
 /// depois — nome em mãos — a textura do WAD externo. Retorna `(slot, w, h)` ou
 /// `None` quando não há imagem nenhuma (a face fica com cor neutra).
+#[allow(clippy::too_many_arguments)]
 fn texture_slot(
     cache: &mut HashMap<usize, Option<(usize, f32, f32)>>,
     textures: &mut Vec<MeshTexture>,
