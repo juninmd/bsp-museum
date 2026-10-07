@@ -1,15 +1,40 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open } from "@tauri-apps/plugin-dialog";
 import { mountModelViewer } from "./resources.ts";
-import type { Finding, MapDetail, MapSummary, MdlSummary, MeshDetail, ModelDir, Settings } from "./types.ts";
-import { mount3D, type Viewer3D } from "./viewer3d.ts";
+import { applyStatic, detectLang, getLang, modeLabel, ruleLabel, setLang, t } from "./i18n.ts";
+import {
+  allRules,
+  allTags,
+  EMPTY_FILTERS,
+  filterAndSort,
+  flagsOf,
+  type FilterState,
+  type SeverityFilter,
+  type SortKey,
+} from "./lib/filters.ts";
+import { fmtSize } from "./lib/report.ts";
+import { annotationOf, applySettings, maps, saveSettings, setMaps, settings, updateAnnotation } from "./store.ts";
+import type { Lang, MapDetail, MapSummary, MdlSummary, ModelDir, Settings, Theme } from "./types.ts";
+import { openAudit } from "./ui/audit.ts";
+import { openCompare } from "./ui/compare.ts";
+import { detailHtml, disposeDetail, wireDetail } from "./ui/detail.ts";
+import { escapeHtml, trapTab } from "./ui/dom.ts";
+import { initModal, isModalOpen } from "./ui/modal.ts";
 
 const gallery = document.querySelector<HTMLElement>("#gallery")!;
 const statusBar = document.querySelector<HTMLElement>("#status")!;
 const search = document.querySelector<HTMLInputElement>("#search")!;
 const modeFilter = document.querySelector<HTMLSelectElement>("#mode-filter")!;
+const sevFilter = document.querySelector<HTMLSelectElement>("#sev-filter")!;
+const ruleFilter = document.querySelector<HTMLSelectElement>("#rule-filter")!;
+const tagFilter = document.querySelector<HTMLSelectElement>("#tag-filter")!;
+const favOnly = document.querySelector<HTMLButtonElement>("#fav-only")!;
 const sortBy = document.querySelector<HTMLSelectElement>("#sort")!;
 const pickButton = document.querySelector<HTMLButtonElement>("#pick")!;
+const compareBtn = document.querySelector<HTMLButtonElement>("#compare")!;
+const auditBtn = document.querySelector<HTMLButtonElement>("#audit")!;
+const langBtn = document.querySelector<HTMLButtonElement>("#lang-toggle")!;
+const themeBtn = document.querySelector<HTMLButtonElement>("#theme-toggle")!;
 const slotsInput = document.querySelector<HTMLInputElement>("#slots")!;
 const drawer = document.querySelector<HTMLElement>("#drawer")!;
 const drawerBody = document.querySelector<HTMLElement>("#drawer-body")!;
@@ -26,82 +51,51 @@ const resDirs = document.querySelector<HTMLElement>("#res-dirs")!;
 const resFiles = document.querySelector<HTMLElement>("#res-files")!;
 const resViewer3d = document.querySelector<HTMLElement>("#res-viewer3d")!;
 const resViewerToolbar = document.querySelector<HTMLElement>("#res-viewer-toolbar")!;
-const resSequence = document.querySelector<HTMLSelectElement>("#res-sequence")!;
 
 /** elemento a devolver o foco quando o drawer fechar (o card que foi clicado/ativado) */
 let lastFocused: HTMLElement | null = null;
 
-let maps: MapSummary[] = [];
-let settings: Settings = { last_dir: null, slots: 32 };
-
-/** Cache da malha 3D por caminho: pedir só na primeira vez que abrir a aba 3D. */
-const meshCache = new Map<string, MeshDetail>();
-/** cleanup dos listeners do documento registrados ao abrir o detalhe */
-let detailCleanup: (() => void) | null = null;
-let activeViewer: Viewer3D | null = null;
-
-type ViewMode = "plan" | "3d" | "tex";
-
-const fmtSize = (bytes: number) =>
-  bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
-
-const area = (m: MapSummary) => (m.bounds ? m.bounds.size[0] * m.bounds.size[1] : 0);
-const spawns = (m: MapSummary) => m.ct_spawns + m.t_spawns;
-
-/** Problemas visíveis já no resumo — o detalhe roda a lista completa. */
-function quickProblems(m: MapSummary): string[] {
-  const out: string[] = [];
-  if (m.error) out.push(m.error);
-  if (spawns(m) === 0) out.push("sem spawn");
-  else if (m.ct_spawns === 0 || m.t_spawns === 0) out.push("spawn de um time só");
-  if (m.fullbright) out.push("fullbright");
-  if (
-    m.mode !== "unknown" &&
-    m.mode_by_entities !== "unknown" &&
-    m.mode_by_entities !== "deathmatch" &&
-    m.mode !== m.mode_by_entities
-  ) {
-    out.push("prefixo divergente");
-  }
-  if (m.mode === "bomb" && m.mode_by_entities !== "bomb") out.push("de_ sem alvo de bomba");
-  if (m.mode === "hostage" && m.mode_by_entities !== "hostage") out.push("cs_ sem refém/resgate");
-  return out;
-}
+/** filtros da galeria (a UI de seleção é só um espelho deste objeto) */
+const filters: FilterState = { ...EMPTY_FILTERS };
+/** mapas marcados para comparar (no máximo 2, por caminho) */
+const compareSet: string[] = [];
+/** detalhe aberto no momento (para redesenhar ao trocar de idioma) */
+let current: { map: MapSummary; detail: MapDetail } | null = null;
 
 function setStatus(text: string, tone: "info" | "error" = "info") {
   statusBar.textContent = text;
   statusBar.dataset.tone = tone;
 }
 
-function visibleMaps(): MapSummary[] {
-  const q = search.value.trim().toLowerCase();
-  const mode = modeFilter.value;
-  let list = maps.filter((m) => {
-    if (mode && m.mode !== mode) return false;
-    if (!q) return true;
-    return (
-      m.name.toLowerCase().includes(q) ||
-      (m.title ?? "").toLowerCase().includes(q) ||
-      m.mode_label.toLowerCase().includes(q)
-    );
-  });
+// ------------------------------------------------------------------ tema e idioma
 
-  const by = sortBy.value;
-  list = [...list].sort((a, b) => {
-    switch (by) {
-      case "size":
-        return b.file_size - a.file_size;
-      case "spawns":
-        return spawns(b) - spawns(a);
-      case "area":
-        return area(b) - area(a);
-      case "problems":
-        return quickProblems(b).length - quickProblems(a).length || a.name.localeCompare(b.name);
-      default:
-        return a.name.localeCompare(b.name);
-    }
-  });
-  return list;
+function systemTheme(): Theme {
+  return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function applyTheme(theme: Theme) {
+  document.documentElement.dataset.theme = theme;
+  themeBtn.textContent = theme === "dark" ? "☾" : "☀";
+  themeBtn.setAttribute("aria-label", t("tools.theme"));
+}
+
+function refreshLanguage() {
+  applyStatic();
+  langBtn.textContent = getLang().toUpperCase();
+  fillModeFilter();
+  fillRuleFilter();
+  fillTagFilter();
+  applyTheme((document.documentElement.dataset.theme as Theme) || "dark");
+  favOnly.title = t("filter.fav");
+  render();
+  updateCompareButton();
+  if (current && !drawer.hidden) renderCurrentDetail();
+}
+
+// ------------------------------------------------------------------ galeria
+
+function visibleMaps(): MapSummary[] {
+  return filterAndSort(maps, filters, settings.annotations, settings.slots, (m) => modeLabel(m.mode));
 }
 
 /** Miniaturas só são geradas quando o card entra na tela: 200 mapas de uma vez travaria. */
@@ -128,327 +122,150 @@ const lazyThumbs = new IntersectionObserver(
   { rootMargin: "300px" },
 );
 
+function updateCompareButton() {
+  compareBtn.disabled = compareSet.length !== 2;
+  compareBtn.textContent = compareSet.length ? t("compare.buttonN", compareSet.length) : t("compare.button");
+}
+
+function toggleCompare(map: MapSummary, on: boolean) {
+  const at = compareSet.indexOf(map.path);
+  if (on && at < 0) {
+    if (compareSet.length === 2) compareSet.shift(); // o mais antigo sai
+    compareSet.push(map.path);
+  } else if (!on && at >= 0) {
+    compareSet.splice(at, 1);
+  }
+  updateCompareButton();
+  for (const box of gallery.querySelectorAll<HTMLInputElement>(".cmp-check")) {
+    box.checked = compareSet.includes(box.closest<HTMLElement>(".card")!.dataset.path!);
+  }
+}
+
 function render() {
   const list = visibleMaps();
   gallery.replaceChildren();
 
   if (!maps.length) {
-    gallery.innerHTML = `<p class="empty">Nenhum mapa carregado. Clique em <strong>escolher pasta…</strong> e aponte para a pasta <code>maps</code> do cstrike.</p>`;
+    gallery.innerHTML = `<p class="empty">${t("gallery.empty")}</p>`;
     return;
   }
   if (!list.length) {
-    gallery.innerHTML = `<p class="empty">Nenhum mapa bate com o filtro.</p>`;
+    gallery.innerHTML = `<p class="empty">${escapeHtml(t("gallery.noMatch"))}</p>`;
     return;
   }
 
   for (const map of list) {
-    const problems = quickProblems(map);
+    const flags = flagsOf(map, settings.slots);
+    const note = annotationOf(map);
     const card = document.createElement("article");
     card.className = "card";
     card.dataset.path = map.path;
-    card.tabIndex = 0;
-    card.setAttribute("role", "button");
-    card.setAttribute("aria-label", `abrir detalhes de ${map.name}`);
-    if (problems.length) card.dataset.problem = "1";
+    if (flags.length) card.dataset.problem = flags.some((f) => f.severity === "critical") ? "critical" : "warn";
 
     card.innerHTML = `
-      <div class="thumb"><div class="spinner"></div></div>
-      <div class="meta">
-        <div class="row">
-          <h2>${escapeHtml(map.name)}</h2>
-          <span class="chip mode-${map.mode}">${escapeHtml(map.mode_label)}</span>
+      <div class="card-open" role="button" tabindex="0" aria-label="${escapeHtml(t("card.open", map.name))}">
+        <div class="thumb"><div class="spinner"></div></div>
+        <div class="meta">
+          <div class="row">
+            <h2>${escapeHtml(map.name)}</h2>
+            <span class="chip mode-${map.mode}">${escapeHtml(modeLabel(map.mode))}</span>
+          </div>
+          ${map.title ? `<p class="title">${escapeHtml(map.title)}</p>` : ""}
+          <dl class="facts">
+            <div><dt>${escapeHtml(t("card.spawns"))}</dt><dd>${map.ct_spawns} CT · ${map.t_spawns} T</dd></div>
+            <div><dt>${escapeHtml(t("card.entities"))}</dt><dd>${map.entity_count}</dd></div>
+            <div><dt>${escapeHtml(t("card.file"))}</dt><dd>${fmtSize(map.file_size)}</dd></div>
+          </dl>
+          ${
+            flags.length
+              ? `<ul class="flags">${flags.map((p) => `<li class="${p.severity}">${escapeHtml(ruleLabel(p.id))}</li>`).join("")}</ul>`
+              : ""
+          }
+          ${note.tags.length ? `<ul class="card-tags">${note.tags.map((tag) => `<li>${escapeHtml(tag)}</li>`).join("")}</ul>` : ""}
         </div>
-        ${map.title ? `<p class="title">${escapeHtml(map.title)}</p>` : ""}
-        <dl class="facts">
-          <div><dt>spawns</dt><dd>${map.ct_spawns} CT · ${map.t_spawns} T</dd></div>
-          <div><dt>entidades</dt><dd>${map.entity_count}</dd></div>
-          <div><dt>arquivo</dt><dd>${fmtSize(map.file_size)}</dd></div>
-        </dl>
-        ${
-          problems.length
-            ? `<ul class="flags">${problems.map((p) => `<li>${escapeHtml(p)}</li>`).join("")}</ul>`
-            : ""
-        }
+      </div>
+      <div class="card-tools">
+        <label class="cmp-label" title="${escapeHtml(t("card.compare"))}">
+          <input type="checkbox" class="cmp-check" aria-label="${escapeHtml(t("card.compareAria", map.name))}" ${compareSet.includes(map.path) ? "checked" : ""} />
+        </label>
+        <button class="fav-btn" aria-pressed="${note.favorite}" aria-label="${escapeHtml(t("note.favorite"))}" title="${escapeHtml(t("note.favorite"))}">${note.favorite ? "★" : "☆"}</button>
       </div>`;
 
-    card.addEventListener("click", () => openDetail(map, card));
-    card.addEventListener("keydown", (e) => {
+    const opener = card.querySelector<HTMLElement>(".card-open")!;
+    opener.addEventListener("click", () => openDetail(map, opener));
+    opener.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        openDetail(map, card);
+        openDetail(map, opener);
       }
+    });
+    card.querySelector<HTMLInputElement>(".cmp-check")!.addEventListener("change", (e) =>
+      toggleCompare(map, (e.target as HTMLInputElement).checked),
+    );
+    card.querySelector<HTMLButtonElement>(".fav-btn")!.addEventListener("click", async () => {
+      await updateAnnotation(map, { favorite: !annotationOf(map).favorite });
+      render();
+      fillTagFilter();
     });
     gallery.append(card);
     lazyThumbs.observe(card);
   }
 
-  const problems = list.filter((m) => quickProblems(m).length).length;
+  const problems = list.filter((m) => flagsOf(m, settings.slots).length).length;
   setStatus(
-    `${list.length} de ${maps.length} mapa(s)${problems ? ` · ${problems} com aviso` : ""}`,
+    problems ? t("status.count.problems", list.length, maps.length, problems) : t("status.count", list.length, maps.length),
   );
 }
 
-function escapeHtml(text: string): string {
-  return text.replace(
-    /[&<>"']/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c,
-  );
-}
+// ------------------------------------------------------------------ detalhe
 
-const SEVERITY_ICON: Record<Finding["severity"], string> = {
-  critical: "✖",
-  warn: "▲",
-  info: "•",
-};
+/** invalida `openDetail` antigos: o último pedido vence, e fechar a gaveta cancela o pendente */
+let detailRequest = 0;
 
 async function openDetail(map: MapSummary, trigger?: HTMLElement) {
+  const mine = ++detailRequest;
   lastFocused = trigger ?? (document.activeElement as HTMLElement | null);
   drawer.hidden = false;
   scrim.hidden = false;
-  drawerBody.innerHTML = `<div class="loading">lendo ${escapeHtml(map.name)}…</div>`;
+  drawerBody.innerHTML = `<div class="loading">${escapeHtml(t("detail.reading", map.name))}</div>`;
   document.addEventListener("keydown", onDrawerKeydown);
   closeDrawerBtn.focus();
 
   try {
-    const detail = await invoke<MapDetail>("map_detail", {
-      path: map.path,
-      slots: settings.slots,
-    });
-    renderDetail(detail);
+    const detail = await invoke<MapDetail>("map_detail", { path: map.path, slots: settings.slots });
+    if (mine !== detailRequest) return;
+    current = { map, detail };
+    renderCurrentDetail();
   } catch (err) {
+    if (mine !== detailRequest) return;
     drawerBody.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
   }
 }
 
-function renderDetail(d: MapDetail) {
-  drawerBody.innerHTML = detailHtml(d);
-  drawerBody.querySelector<HTMLButtonElement>("#export")?.addEventListener("click", async () => {
-    const target = await save({
-      defaultPath: `${d.summary.name}.svg`,
-      filters: [{ name: "SVG", extensions: ["svg"] }],
-    });
-    if (!target) return;
-    await invoke("export_svg", { target, svg: d.svg });
-    setStatus(`planta exportada para ${target}`);
+function renderCurrentDetail() {
+  if (!current) return;
+  disposeDetail();
+  drawerBody.innerHTML = detailHtml(current.detail, current.map);
+  wireDetail(drawerBody, current.detail, current.map, {
+    slots: settings.slots,
+    setStatus,
+    onAnnotationChange: () => {
+      render();
+      fillTagFilter();
+    },
   });
-
-  const planHolder = drawerBody.querySelector<HTMLElement>("#plan-holder")!;
-  const viewerHolder = drawerBody.querySelector<HTMLElement>("#viewer3d")!;
-  const controlsBar = drawerBody.querySelector<HTMLElement>("#viewer-controls")!;
-  const alphaBox = drawerBody.querySelector<HTMLInputElement>("#tex-alpha")!;
-  const fpsBtn = drawerBody.querySelector<HTMLButtonElement>("#fps")!;
-  const fsBtn = drawerBody.querySelector<HTMLButtonElement>("#fullscreen")!;
-  const cameraLabel = drawerBody.querySelector<HTMLElement>("#camera-label")!;
-  const buttons = Array.from(drawerBody.querySelectorAll<HTMLButtonElement>("[data-view]"));
-
-  const showControls = (mode: ViewMode) => {
-    const is3D = mode === "3d" || mode === "tex";
-    controlsBar.hidden = !is3D;
-    if (is3D) cameraLabel.textContent = "arraste para girar · scroll para zoom";
-  };
-
-  alphaBox.addEventListener("change", () => activeViewer?.setTransparent(alphaBox.checked));
-  fpsBtn.addEventListener("click", () => {
-    if (!activeViewer) return;
-    if (fpsBtn.dataset.on === "1") {
-      activeViewer.exitFirstPerson();
-      fpsBtn.dataset.on = "0";
-      fpsBtn.textContent = "primeira pessoa";
-      cameraLabel.textContent = "arraste para girar · scroll para zoom";
-    } else {
-      activeViewer.enterFirstPerson();
-      fpsBtn.dataset.on = "1";
-      fpsBtn.textContent = "sair (Esc)";
-      cameraLabel.textContent = "WASD mover · mouse olhar · Space/Ctrl sobe/desce";
-    }
-  });
-  const resetFpsBtn = () => {
-    fpsBtn.dataset.on = "0";
-    fpsBtn.textContent = "primeira pessoa";
-    cameraLabel.textContent = "arraste para girar · scroll para zoom";
-  };
-  const onPointerLock = () => {
-    if (!document.pointerLockElement) resetFpsBtn();
-  };
-  document.addEventListener("pointerlockchange", onPointerLock);
-  fsBtn.addEventListener("click", () => activeViewer?.setFullscreen(!document.fullscreenElement));
-  const onFsChange = () => {
-    fsBtn.textContent = document.fullscreenElement ? "sair da tela cheia" : "tela cheia";
-  };
-  document.addEventListener("fullscreenchange", onFsChange);
-
-  const setMode = async (mode: ViewMode) => {
-    activeViewer?.dispose();
-    activeViewer = null;
-    document.removeEventListener("pointerlockchange", onPointerLock);
-    planHolder.hidden = mode !== "plan";
-    viewerHolder.hidden = mode === "plan";
-    for (const b of buttons) b.classList.toggle("active", b.dataset.view === mode);
-    showControls(mode);
-    if (mode === "plan") {
-      alphaBox.checked = false;
-      resetFpsBtn();
-      return;
-    }
-
-    let mesh = meshCache.get(d.summary.path);
-    if (mesh === undefined) {
-      viewerHolder.innerHTML = `<div class="loading">montando cena 3D…</div>`;
-      try {
-        mesh = await invoke<MeshDetail>("map_mesh", { path: d.summary.path });
-        meshCache.set(d.summary.path, mesh);
-      } catch (err) {
-        viewerHolder.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
-        return;
-      }
-    }
-    viewerHolder.replaceChildren();
-    activeViewer = mount3D(viewerHolder, mesh, mode === "tex");
-  };
-
-  for (const b of buttons) b.addEventListener("click", () => setMode(b.dataset.view as ViewMode));
-  detailCleanup = () => {
-    document.removeEventListener("pointerlockchange", onPointerLock);
-    document.removeEventListener("fullscreenchange", onFsChange);
-  };
-}
-
-function detailHtml(d: MapDetail): string {
-  const s = d.summary;
-  const size = s.bounds
-    ? `${Math.round(s.bounds.size[0])} × ${Math.round(s.bounds.size[1])} × ${Math.round(s.bounds.size[2])} un`
-    : "—";
-
-  const findings = d.findings.length
-    ? d.findings
-        .map(
-          (f) => `
-      <li class="finding ${f.severity}">
-        <div class="finding-head">${SEVERITY_ICON[f.severity]} ${escapeHtml(f.title)} <code>${escapeHtml(f.id)}</code></div>
-        <p>${escapeHtml(f.detail)}</p>
-        <p class="hint">→ ${escapeHtml(f.hint)}</p>
-      </li>`,
-        )
-        .join("")
-    : `<li class="finding ok">✔ Nenhum problema conhecido</li>`;
-
-  const topEntities = d.histogram
-    .slice(0, 14)
-    .map(([name, count]) => `<tr><td><code>${escapeHtml(name)}</code></td><td>${count}</td></tr>`)
-    .join("");
-
-  const lumps = d.lumps
-    .filter((l) => l.length > 0)
-    .slice(0, 8)
-    .map(
-      (l) => `<tr>
-        <td>${escapeHtml(l.name)}</td>
-        <td>${fmtSize(l.length)}</td>
-        <td><div class="bar" style="width:${Math.max(2, l.percent).toFixed(1)}%"></div>${l.percent.toFixed(1)}%</td>
-      </tr>`,
-    )
-    .join("");
-
-  return `
-    <header class="detail-head">
-      <h2>${escapeHtml(s.name)}</h2>
-      <span class="chip mode-${s.mode}">${escapeHtml(s.mode_label)}</span>
-      <button id="export" class="ghost">exportar planta (SVG)</button>
-    </header>
-    ${s.title ? `<p class="title">“${escapeHtml(s.title)}”</p>` : ""}
-
-    <div class="plan-toolbar">
-      <div class="seg" role="tablist">
-        <button data-view="plan" class="active">Planta</button>
-        <button data-view="3d">3D</button>
-        <button data-view="tex">3D + texturas</button>
-      </div>
-      <span class="dim">${d.polygons} polígonos desenhados</span>
-    </div>
-    <div class="viewer-controls" id="viewer-controls" hidden>
-      <label class="chk"><input type="checkbox" id="tex-alpha" /> texturas transparentes</label>
-      <button id="fps" class="ghost2">primeira pessoa</button>
-      <button id="fullscreen" class="ghost2">tela cheia</button>
-      <code id="camera-label" class="hintc">arraste para girar · scroll para zoom</code>
-    </div>
-    <div class="plan" id="plan-holder">${d.svg}</div>
-    <div class="viewer3d" id="viewer3d" hidden></div>
-    <p class="legend">
-      <span class="key ct"></span> spawn CT
-      <span class="key t"></span> spawn T
-      <span class="key grad"></span> altura (baixo → alto)
-      <span class="dim">arraste para girar · scroll para zoom</span>
-    </p>
-
-    <section>
-      <h3>Diagnóstico</h3>
-      <ul class="findings">${findings}</ul>
-    </section>
-
-    <section class="grid-2">
-      <div>
-        <h3>Geometria</h3>
-        <dl class="facts col">
-          <div><dt>dimensões</dt><dd>${size}</dd></div>
-          <div><dt>faces</dt><dd>${d.face_count.toLocaleString("pt-BR")}</dd></div>
-          <div><dt>vértices</dt><dd>${d.vertex_count.toLocaleString("pt-BR")}</dd></div>
-          <div><dt>modelos (brush entities)</dt><dd>${d.model_count}</dd></div>
-          <div><dt>arquivo</dt><dd>${fmtSize(s.file_size)}</dd></div>
-        </dl>
-      </div>
-      <div>
-        <h3>Texturas</h3>
-        <dl class="facts col">
-          <div><dt>total</dt><dd>${d.texture_count}</dd></div>
-          <div><dt>embutidas no BSP</dt><dd>${d.embedded_textures}</dd></div>
-          <div><dt>céu</dt><dd>${d.sky ? escapeHtml(d.sky) : "—"}</dd></div>
-          <div><dt>WADs declarados</dt><dd>${d.wads.length ? escapeHtml(d.wads.join(", ")) : "nenhum"}</dd></div>
-        </dl>
-      </div>
-    </section>
-
-    <section class="grid-2">
-      <div>
-        <h3>Entidades mais usadas</h3>
-        <table class="table"><tbody>${topEntities}</tbody></table>
-      </div>
-      <div>
-        <h3>O que pesa no arquivo</h3>
-        <table class="table lumps"><tbody>${lumps}</tbody></table>
-      </div>
-    </section>
-
-    <details class="texlist">
-      <summary>${d.textures.length} textura(s) usadas</summary>
-      <p>${d.textures.map((t) => `<code>${escapeHtml(t)}</code>`).join(" ")}</p>
-    </details>`;
 }
 
 /** mantém o Tab preso dentro do drawer enquanto ele estiver aberto (foco não vaza pro fundo) */
 function onDrawerKeydown(e: KeyboardEvent) {
-  if (e.key !== "Tab") return;
-  const focusable = Array.from(
-    drawer.querySelectorAll<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-    ),
-  ).filter((el) => el.offsetParent !== null);
-  if (!focusable.length) return;
-  const first = focusable[0]!;
-  const last = focusable[focusable.length - 1]!;
-  if (e.shiftKey && document.activeElement === first) {
-    e.preventDefault();
-    last.focus();
-  } else if (!e.shiftKey && document.activeElement === last) {
-    e.preventDefault();
-    first.focus();
-  }
+  if (isModalOpen()) return;
+  trapTab(drawer, e);
 }
 
 function closeDrawer() {
-  detailCleanup?.();
-  detailCleanup = null;
-  activeViewer?.dispose();
-  activeViewer = null;
+  detailRequest++;
+  disposeDetail();
+  current = null;
   drawer.hidden = true;
   scrim.hidden = true;
   drawerBody.replaceChildren();
@@ -457,33 +274,54 @@ function closeDrawer() {
   lastFocused = null;
 }
 
+// ------------------------------------------------------------------ pasta e filtros
+
 async function loadDir(dir: string) {
-  setStatus(`lendo ${dir}…`);
+  setStatus(t("status.reading", dir));
   try {
-    maps = await invoke<MapSummary[]>("scan_maps", { dir });
+    setMaps(await invoke<MapSummary[]>("scan_maps", { dir }));
     settings.last_dir = dir;
-    await invoke("save_settings", { settings });
+    await saveSettings();
+    compareSet.length = 0;
+    updateCompareButton();
     fillModeFilter();
+    fillRuleFilter();
+    fillTagFilter();
     render();
   } catch (err) {
     setStatus(String(err), "error");
   }
 }
 
+function fillSelect(select: HTMLSelectElement, first: [string, string], options: [string, string][]) {
+  const current = select.value;
+  select.replaceChildren(new Option(first[1], first[0]));
+  for (const [value, label] of options) select.append(new Option(label, value));
+  select.value = options.some(([v]) => v === current) ? current : "";
+}
+
 function fillModeFilter() {
   const seen = new Map<string, string>();
-  for (const m of maps) seen.set(m.mode, m.mode_label);
-  const current = modeFilter.value;
-  modeFilter.replaceChildren(new Option("todos os modos", ""));
-  for (const [value, label] of [...seen].sort((a, b) => a[1].localeCompare(b[1]))) {
-    modeFilter.append(new Option(label, value));
-  }
-  modeFilter.value = current;
+  for (const m of maps) seen.set(m.mode, modeLabel(m.mode));
+  fillSelect(modeFilter, ["", t("filter.mode.all")], [...seen].sort((a, b) => a[1].localeCompare(b[1])));
+  filters.mode = modeFilter.value;
+}
+
+function fillRuleFilter() {
+  const rules = allRules(maps, settings.slots).map((id): [string, string] => [id, ruleLabel(id)]);
+  fillSelect(ruleFilter, ["", t("filter.rule.any")], rules.sort((a, b) => a[1].localeCompare(b[1])));
+  filters.rule = ruleFilter.value;
+}
+
+function fillTagFilter() {
+  const tags = allTags(settings.annotations).map((tag): [string, string] => [tag, tag]);
+  fillSelect(tagFilter, ["", t("filter.tag.any")], tags);
+  filters.tag = tagFilter.value;
 }
 
 // -------------------------------------------------------------- Recursos (aba avulsa)
 
-let resViewer: Viewer3D | null = null;
+let resViewer: { dispose(): void } | null = null;
 let resRoot = "";
 
 function switchView(view: "maps" | "resources") {
@@ -505,7 +343,7 @@ function switchView(view: "maps" | "resources") {
 function renderResDirs(dirs: ModelDir[]) {
   resDirs.replaceChildren();
   if (!dirs.length) {
-    resDirs.innerHTML = `<p class="empty">Nenhum .mdl encontrado nessa pasta.</p>`;
+    resDirs.innerHTML = `<p class="empty">${escapeHtml(t("mdl.noneFound"))}</p>`;
     return;
   }
   for (const dir of dirs) {
@@ -525,7 +363,7 @@ function renderResDirs(dirs: ModelDir[]) {
 function renderResFiles(files: string[]) {
   resFiles.replaceChildren();
   if (!files.length) {
-    resFiles.innerHTML = `<p class="empty">Pasta vazia.</p>`;
+    resFiles.innerHTML = `<p class="empty">${escapeHtml(t("mdl.emptyDir"))}</p>`;
     return;
   }
   for (const path of files) {
@@ -542,19 +380,22 @@ function renderResFiles(files: string[]) {
   }
 }
 
+let modelRequest = 0;
+
 async function openModel(path: string) {
+  const mine = ++modelRequest;
   resViewer?.dispose();
   resViewer = null;
   resViewerToolbar.hidden = true;
-  resViewer3d.innerHTML = `<div class="loading">decodificando modelo…</div>`;
+  resViewer3d.innerHTML = `<div class="loading">${escapeHtml(t("mdl.decoding"))}</div>`;
   try {
     const model = await invoke<MdlSummary>("load_model", { path });
+    if (mine !== modelRequest) return; // outro modelo foi escolhido enquanto este carregava
     resViewer3d.replaceChildren();
-    resViewer = mountModelViewer(resViewer3d, model);
-    resSequence.replaceChildren();
-    for (const seq of model.sequences) resSequence.append(new Option(seq, seq));
+    resViewer = mountModelViewer(resViewer3d, model, path);
     resViewerToolbar.hidden = model.sequences.length === 0;
   } catch (err) {
+    if (mine !== modelRequest) return;
     resViewer3d.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
   }
 }
@@ -563,7 +404,7 @@ navMaps.addEventListener("click", () => switchView("maps"));
 navResources.addEventListener("click", () => switchView("resources"));
 
 resPickBtn.addEventListener("click", async () => {
-  const dir = await open({ directory: true, multiple: false, title: "pasta do mod (ou de models/)" });
+  const dir = await open({ directory: true, multiple: false, title: t("mdl.pickTitle") });
   if (typeof dir !== "string") return;
   resRoot = dir;
   resRootLabel.textContent = dir;
@@ -583,7 +424,7 @@ resPickBtn.addEventListener("click", async () => {
 // ------------------------------------------------------------------------------------
 
 pickButton.addEventListener("click", async () => {
-  const dir = await open({ directory: true, multiple: false, title: "pasta com os .bsp" });
+  const dir = await open({ directory: true, multiple: false, title: t("pick.title") });
   if (typeof dir === "string") await loadDir(dir);
 });
 
@@ -591,26 +432,99 @@ slotsInput.addEventListener("change", async () => {
   const value = Number.parseInt(slotsInput.value, 10);
   settings.slots = Number.isFinite(value) ? Math.min(128, Math.max(2, value)) : 32;
   slotsInput.value = String(settings.slots);
-  await invoke("save_settings", { settings });
+  await saveSettings();
+  fillRuleFilter();
   render();
 });
 
 let searchDebounce = 0;
 search.addEventListener("input", () => {
   window.clearTimeout(searchDebounce);
-  searchDebounce = window.setTimeout(render, 120);
+  searchDebounce = window.setTimeout(() => {
+    filters.query = search.value;
+    render();
+  }, 120);
 });
-modeFilter.addEventListener("change", render);
-sortBy.addEventListener("change", render);
-closeDrawerBtn.addEventListener("click", closeDrawer);
-scrim.addEventListener("click", closeDrawer);
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeDrawer();
+modeFilter.addEventListener("change", () => {
+  filters.mode = modeFilter.value;
+  render();
+});
+sevFilter.addEventListener("change", () => {
+  filters.severity = sevFilter.value as SeverityFilter;
+  render();
+});
+ruleFilter.addEventListener("change", () => {
+  filters.rule = ruleFilter.value;
+  render();
+});
+tagFilter.addEventListener("change", () => {
+  filters.tag = tagFilter.value;
+  render();
+});
+sortBy.addEventListener("change", () => {
+  filters.sort = sortBy.value as SortKey;
+  render();
+});
+favOnly.addEventListener("click", () => {
+  filters.favoritesOnly = !filters.favoritesOnly;
+  favOnly.setAttribute("aria-pressed", String(filters.favoritesOnly));
+  favOnly.textContent = filters.favoritesOnly ? "★" : "☆";
+  render();
 });
 
-(async () => {
-  settings = await invoke<Settings>("load_settings");
+compareBtn.addEventListener("click", () => {
+  const [a, b] = compareSet.map((p) => maps.find((m) => m.path === p));
+  if (a && b) void openCompare(a, b, settings.slots);
+});
+
+auditBtn.addEventListener("click", () => {
+  if (!settings.last_dir) {
+    setStatus(t("audit.needFolder"), "error");
+    return;
+  }
+  void openAudit(
+    settings.last_dir,
+    settings.slots,
+    (path) => {
+      const map = maps.find((m) => m.path === path);
+      if (map) void openDetail(map);
+    },
+    setStatus,
+  );
+});
+
+langBtn.addEventListener("click", async () => {
+  const next: Lang = getLang() === "pt" ? "en" : "pt";
+  settings.lang = next;
+  setLang(next);
+  refreshLanguage();
+  await saveSettings();
+});
+
+themeBtn.addEventListener("click", async () => {
+  const next: Theme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  settings.theme = next;
+  applyTheme(next);
+  await saveSettings();
+});
+
+closeDrawerBtn.addEventListener("click", closeDrawer);
+scrim.addEventListener("click", closeDrawer);
+initModal();
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !isModalOpen() && !drawer.hidden) closeDrawer();
+});
+
+void (async () => {
+  try {
+    applySettings(await invoke<Partial<Settings>>("load_settings"));
+  } catch {
+    // sem backend: segue com os padrões
+  }
+  setLang(detectLang(settings.lang, navigator.language));
+  applyTheme(settings.theme ?? systemTheme());
   slotsInput.value = String(settings.slots);
+  refreshLanguage();
   if (settings.last_dir) await loadDir(settings.last_dir);
   else render();
 })();

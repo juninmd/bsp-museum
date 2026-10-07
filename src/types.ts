@@ -27,16 +27,55 @@ export interface MapSummary {
   bounds: Bounds | null;
   fullbright: boolean;
   error: string | null;
+  /** regras decididas só com entidades + cabeçalho (sem `poucos-spawns`) */
+  problems: Problem[];
+  /** 30 = GoldSrc, 29 = Quake */
+  bsp_version: number;
 }
 
 export type Severity = "critical" | "warn" | "info";
 
+export interface Problem {
+  id: string;
+  severity: Severity;
+}
+
 export interface Finding {
   id: string;
   severity: Severity;
+  /** texto em português vindo do backend; `args` permite remontar em outro idioma */
   title: string;
   detail: string;
   hint: string;
+  args: string[];
+}
+
+export type ResourceKind =
+  | "mapa"
+  | "res"
+  | "txt"
+  | "overview"
+  | "wad"
+  | "sky"
+  | "model"
+  | "sprite"
+  | "sound"
+  | "extra";
+
+export interface ResourceItem {
+  kind: ResourceKind;
+  path: string;
+  size: number;
+  found: boolean;
+  /** já existe no jogo base (valve/ ou WAD padrão): fora do FastDL */
+  shared: boolean;
+}
+
+export interface ResourceReport {
+  items: ResourceItem[];
+  download_size: number;
+  download_count: number;
+  missing: number;
 }
 
 export interface LumpInfo {
@@ -60,11 +99,25 @@ export interface MapDetail {
   findings: Finding[];
   svg: string;
   polygons: number;
+  resources: ResourceReport;
 }
+
+export interface Annotation {
+  favorite: boolean;
+  tags: string[];
+  note: string;
+}
+
+export type Lang = "pt" | "en";
+export type Theme = "dark" | "light";
 
 export interface Settings {
   last_dir: string | null;
   slots: number;
+  lang: Lang | null;
+  theme: Theme | null;
+  /** chave = nome do arquivo do mapa (com extensão, sem pasta) */
+  annotations: Record<string, Annotation>;
 }
 
 export interface SpawnPoint {
@@ -99,8 +152,35 @@ export interface MdlSummary {
   uvs: number[];
   texindex: number[];
   textures: MeshTexture[];
-  /** nomes das sequências — metadado; trocar não muda a pose desenhada nesta versão */
+  /** nomes das sequências (mesma ordem de `sequence_info`) */
   sequences: string[];
+  sequence_info: MdlSeqInfo[];
+  /** mesmos vértices de `positions`, no espaço local do bone dono — entrada do skinning */
+  local_positions: number[];
+  /** bone dono de cada vértice (3 por triângulo) */
+  vert_bones: number[];
+  num_bones: number;
+  /** por família de skin: textura que substitui cada textura base (índice = textura da família 0) */
+  skin_families: number[][];
+}
+
+export interface MdlSeqInfo {
+  name: string;
+  fps: number;
+  frames: number;
+  looping: boolean;
+  blends: number;
+  /** 0 = dados no próprio arquivo; N > 0 = no arquivo externo `nome0N.mdl` */
+  group: number;
+}
+
+/** Quadros de uma sequência: pose de mundo por bone, 7 floats (px,py,pz,qx,qy,qz,qw) por bone por quadro. */
+export interface MdlSeqFrames {
+  frames: number;
+  bones: number;
+  fps: number;
+  looping: boolean;
+  data: number[];
 }
 
 export interface MeshDetail {
@@ -119,4 +199,90 @@ export interface MeshDetail {
   wad_textures: number;
   triangles: number;
   skipped: number;
+  /** atlas de lightmaps (`data:image/png`); null em mapa fullbright */
+  lightmap: string | null;
+  /** uv no atlas por vértice (6 floats por triângulo); vazio sem atlas */
+  lm_uvs: number[];
+  /** face do BSP de cada triângulo; -1 = prop `.mdl` (sempre visível) */
+  tri_face: number[];
+  pvs: PvsData | null;
+  bsp_version: number;
+}
+
+export interface PvsData {
+  /** 4 floats por plano: nx, ny, nz, dist */
+  planes: number[];
+  /** 3 ints por nó: plano, filho 0 (frente), filho 1 (trás); negativo = folha `-1 - n` */
+  nodes: number[];
+  /** 4 ints por folha: contents, visofs, primeira marksurface, quantidade */
+  leaves: number[];
+  marksurfaces: number[];
+  /** lump de visibilidade em base64 */
+  visibility: string;
+  headnode: number;
+  visleafs: number;
+  world_first_face: number;
+  world_face_count: number;
+}
+
+export interface EntityRow {
+  index: number;
+  classname: string;
+  targetname: string | null;
+  origin: [number, number, number] | null;
+  model: string | null;
+  keys: [string, string][];
+}
+
+export interface AuditRow {
+  name: string;
+  path: string;
+  file_size: number;
+  mode: GameMode;
+  ct_spawns: number;
+  t_spawns: number;
+  bsp_version: number;
+  error: string | null;
+  findings: Finding[];
+}
+
+export interface AuditReport {
+  dir: string;
+  slots: number;
+  rows: AuditRow[];
+  duplicates: string[][];
+}
+
+export interface CompareSide {
+  name: string;
+  title: string | null;
+  file_size: number;
+  mode: GameMode;
+  bsp_version: number;
+  ct_spawns: number;
+  t_spawns: number;
+  entities: number;
+  faces: number;
+  vertices: number;
+  textures: number;
+  bounds: Bounds | null;
+  fullbright: boolean;
+  findings: [string, Severity][];
+}
+
+export interface CountDiff {
+  name: string;
+  a: number;
+  b: number;
+}
+
+export interface Comparison {
+  a: CompareSide;
+  b: CompareSide;
+  lumps: CountDiff[];
+  entities: CountDiff[];
+  textures_only_a: string[];
+  textures_only_b: string[];
+  wads_only_a: string[];
+  wads_only_b: string[];
 }

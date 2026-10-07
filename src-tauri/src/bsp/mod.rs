@@ -1,8 +1,10 @@
 pub mod entities;
+pub mod light;
 pub mod palette;
 pub mod reader;
 pub mod render;
 pub mod sky;
+pub mod tree;
 pub mod wad;
 
 use base64::Engine as _;
@@ -11,6 +13,9 @@ use serde::Serialize;
 
 /// BSP do GoldSrc (Half-Life, Counter-Strike 1.6).
 pub const GOLDSRC_VERSION: i32 = 30;
+/// BSP do Quake 1 (e Half-Life alpha): mesmo layout de lumps, mas sem paleta
+/// embutida nas texturas e com lightmap monocromático (1 byte por texel).
+pub const QUAKE_VERSION: i32 = 29;
 pub const LUMP_COUNT: usize = 15;
 const HEADER_SIZE: usize = 4 + LUMP_COUNT * 8;
 
@@ -23,7 +28,6 @@ pub const LUMP_NODES: usize = 5;
 pub const LUMP_TEXINFO: usize = 6;
 pub const LUMP_FACES: usize = 7;
 pub const LUMP_LIGHTING: usize = 8;
-pub const LUMP_CLIPNODES: usize = 9;
 pub const LUMP_LEAVES: usize = 10;
 pub const LUMP_MARKSURFACES: usize = 11;
 pub const LUMP_EDGES: usize = 12;
@@ -48,7 +52,7 @@ pub const LUMP_NAMES: [&str; LUMP_COUNT] = [
     "models",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct Lump {
     pub offset: usize,
     pub length: usize,
@@ -59,6 +63,35 @@ pub struct Face {
     pub first_edge: i32,
     pub num_edges: u16,
     pub texinfo: u16,
+    /// offset do lightmap no lump de iluminação; `-1` = face sem lightmap
+    pub lightofs: i32,
+    /// estilos de luz (0 = luz estática normal, 255 = sem estilo)
+    pub styles: [u8; 4],
+}
+
+/// Plano do BSP (`dplane_t`): normal, distância e eixo dominante.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct Plane {
+    pub normal: [f32; 3],
+    pub dist: f32,
+}
+
+/// Nó da árvore BSP (`dnode_t`): filhos negativos são folhas (`-1 - filho`).
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct Node {
+    pub plane: i32,
+    pub children: [i16; 2],
+}
+
+/// Folha da árvore BSP (`dleaf_t`).
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct Leaf {
+    /// -1 vazio, -2 sólido, -3 água, -4 lodo, -5 lava, -6 céu…
+    pub contents: i32,
+    /// offset da linha de visibilidade (PVS) comprimida; `-1` = sem vis
+    pub visofs: i32,
+    pub first_marksurface: u16,
+    pub num_marksurfaces: u16,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -70,17 +103,21 @@ pub struct Texture {
     pub embedded: bool,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct Model {
     pub mins: [f32; 3],
     pub maxs: [f32; 3],
     pub origin: [f32; 3],
+    /// raiz da árvore do hull 0 (visual) — de onde se classifica um ponto
+    pub headnode: i32,
+    /// folhas visíveis do modelo (define o tamanho da linha de PVS)
+    pub visleafs: i32,
     pub first_face: i32,
     pub num_faces: i32,
 }
 
 /// Geometria e metadados de um BSP, já validados.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Bsp {
     pub version: i32,
     pub lumps: [Lump; LUMP_COUNT],
@@ -93,11 +130,21 @@ pub struct Bsp {
     /// eixos de textura (vecs[2][4]) de cada texinfo — é o que mapeia um
     /// vértice do mundo em coordenada UV da textura.
     pub texinfo_vecs: Vec<[[f32; 4]; 2]>,
+    /// flags de cada texinfo (bit 0 = `TEX_SPECIAL`: céu/água, sem lightmap)
+    pub texinfo_flags: Vec<u32>,
     pub textures: Vec<Texture>,
     /// nome de cada textura da tabela crua (índice do texinfo). Vazio quando a
     /// entrada não existe no BSP (`offset -1`) — o nome vive no WAD.
     pub raw_texture_name: Vec<String>,
     pub models: Vec<Model>,
+    pub planes: Vec<Plane>,
+    pub nodes: Vec<Node>,
+    pub leaves: Vec<Leaf>,
+    pub marksurfaces: Vec<u16>,
+    /// lump de visibilidade (PVS comprimido por RLE de zeros)
+    pub visibility: Vec<u8>,
+    /// lump de iluminação (RGB por texel no GoldSrc, 1 byte no Quake)
+    pub lighting: Vec<u8>,
 }
 
 fn lump_slice<'a>(data: &'a [u8], lump: Lump, name: &'static str) -> Result<&'a [u8]> {
@@ -130,7 +177,7 @@ impl Bsp {
         }
         let mut cur = Cursor::new(data);
         let version = cur.i32()?;
-        if version != GOLDSRC_VERSION {
+        if version != GOLDSRC_VERSION && version != QUAKE_VERSION {
             return Err(BspError::BadVersion(version));
         }
         let mut lumps = [Lump { offset: 0, length: 0 }; LUMP_COUNT];
@@ -148,14 +195,6 @@ impl Bsp {
             *lump = Lump { offset: offset as usize, length: length as usize };
         }
         Ok((version, lumps))
-    }
-
-    /// Só o lump de entidades e o modelo 0 — o suficiente para o catálogo.
-    pub fn parse_light(data: &[u8]) -> Result<(String, Option<Model>, [Lump; LUMP_COUNT])> {
-        let (_, lumps) = Self::header(data)?;
-        let entities_raw = read_entities(data, lumps[LUMP_ENTITIES])?;
-        let models = read_models(data, lumps[LUMP_MODELS])?;
-        Ok((entities_raw, models.first().copied(), lumps))
     }
 
     pub fn parse(data: &[u8]) -> Result<Bsp> {
@@ -197,9 +236,9 @@ impl Bsp {
             let first_edge = cur.i32()?;
             let num_edges = cur.u16()?;
             let texinfo = cur.u16()?;
-            cur.skip(4)?; // styles[4]
-            cur.skip(4)?; // lightofs
-            faces.push(Face { first_edge, num_edges, texinfo });
+            let styles = [cur.u8()?, cur.u8()?, cur.u8()?, cur.u8()?];
+            let lightofs = cur.i32()?;
+            faces.push(Face { first_edge, num_edges, texinfo, lightofs, styles });
         }
 
         let tin = lumps[LUMP_TEXINFO];
@@ -207,16 +246,26 @@ impl Bsp {
         let mut cur = Cursor::new(lump_slice(data, tin, "texinfo")?);
         let mut texinfo_miptex = Vec::with_capacity(count);
         let mut texinfo_vecs = Vec::with_capacity(count);
+        let mut texinfo_flags = Vec::with_capacity(count);
         for _ in 0..count {
             let s_axis = cur.vec4()?;
             let t_axis = cur.vec4()?;
             texinfo_vecs.push([s_axis, t_axis]);
             texinfo_miptex.push(cur.u32()?);
-            cur.skip(4)?; // flags
+            texinfo_flags.push(cur.u32()?);
         }
 
         let (textures, raw_texture_name) = read_textures(data, lumps[LUMP_TEXTURES])?;
         let models = read_models(data, lumps[LUMP_MODELS])?;
+
+        // Lumps de árvore/visibilidade/luz só alimentam diagnóstico e o viewer:
+        // arquivo com um deles torto ainda abre (planta e 3D seguem funcionando).
+        let planes = read_planes(data, lumps[LUMP_PLANES]).unwrap_or_default();
+        let nodes = read_nodes(data, lumps[LUMP_NODES]).unwrap_or_default();
+        let leaves = read_leaves(data, lumps[LUMP_LEAVES]).unwrap_or_default();
+        let marksurfaces = read_marksurfaces(data, lumps[LUMP_MARKSURFACES]).unwrap_or_default();
+        let visibility = lump_slice(data, lumps[LUMP_VISIBILITY], "visibility").map(<[u8]>::to_vec).unwrap_or_default();
+        let lighting = lump_slice(data, lumps[LUMP_LIGHTING], "lighting").map(<[u8]>::to_vec).unwrap_or_default();
 
         Ok(Bsp {
             version,
@@ -228,9 +277,16 @@ impl Bsp {
             faces,
             texinfo_miptex,
             texinfo_vecs,
+            texinfo_flags,
             textures,
             raw_texture_name,
             models,
+            planes,
+            nodes,
+            leaves,
+            marksurfaces,
+            visibility,
+            lighting,
         })
     }
 
@@ -251,6 +307,14 @@ impl Bsp {
         Some(points)
     }
 
+    /// Nome da textura da face, pela tabela crua (o índice do texinfo). `textures` é a lista
+    /// compacta (sem as entradas `-1`), então indexá-la com o índice cru erra a textura.
+    pub fn texture_name_of(&self, face: &Face) -> Option<&str> {
+        let miptex = *self.texinfo_miptex.get(face.texinfo as usize)? as usize;
+        self.raw_texture_name.get(miptex).map(String::as_str).filter(|n| !n.is_empty())
+    }
+
+    #[cfg(test)]
     pub fn texture_of(&self, face: &Face) -> Option<&Texture> {
         let miptex = *self.texinfo_miptex.get(face.texinfo as usize)? as usize;
         self.textures.get(miptex)
@@ -258,6 +322,11 @@ impl Bsp {
 
     pub fn bounds(&self) -> Option<Model> {
         self.models.first().copied()
+    }
+
+    /// BSP do Quake (v29): sem paleta embutida e lightmap de 1 canal.
+    pub fn is_quake(&self) -> bool {
+        self.version == QUAKE_VERSION
     }
 }
 
@@ -275,13 +344,67 @@ fn read_models(data: &[u8], lump: Lump) -> Result<Vec<Model>> {
         let mins = cur.vec3()?;
         let maxs = cur.vec3()?;
         let origin = cur.vec3()?;
-        cur.skip(16)?; // headnode[4]
-        cur.skip(4)?; // visleafs
+        let headnode = cur.i32()?; // headnode[0]: hull visual
+        cur.skip(12)?; // headnode[1..4]: hulls de colisão
+        let visleafs = cur.i32()?;
         let first_face = cur.i32()?;
         let num_faces = cur.i32()?;
-        models.push(Model { mins, maxs, origin, first_face, num_faces });
+        models.push(Model { mins, maxs, origin, headnode, visleafs, first_face, num_faces });
     }
     Ok(models)
+}
+
+fn read_planes(data: &[u8], lump: Lump) -> Result<Vec<Plane>> {
+    let count = check_stride(lump, "planes", 20)?;
+    let mut cur = Cursor::new(lump_slice(data, lump, "planes")?);
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        let normal = cur.vec3()?;
+        let dist = cur.f32()?;
+        cur.skip(4)?; // type
+        out.push(Plane { normal, dist });
+    }
+    Ok(out)
+}
+
+fn read_nodes(data: &[u8], lump: Lump) -> Result<Vec<Node>> {
+    let count = check_stride(lump, "nodes", 24)?;
+    let mut cur = Cursor::new(lump_slice(data, lump, "nodes")?);
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        let plane = cur.i32()?;
+        let children = [cur.i16()?, cur.i16()?];
+        cur.skip(12)?; // mins[3], maxs[3] (i16)
+        cur.skip(4)?; // firstface, numfaces
+        out.push(Node { plane, children });
+    }
+    Ok(out)
+}
+
+fn read_leaves(data: &[u8], lump: Lump) -> Result<Vec<Leaf>> {
+    let count = check_stride(lump, "leaves", 28)?;
+    let mut cur = Cursor::new(lump_slice(data, lump, "leaves")?);
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        let contents = cur.i32()?;
+        let visofs = cur.i32()?;
+        cur.skip(12)?; // mins[3], maxs[3] (i16)
+        let first_marksurface = cur.u16()?;
+        let num_marksurfaces = cur.u16()?;
+        cur.skip(4)?; // ambient_level[4]
+        out.push(Leaf { contents, visofs, first_marksurface, num_marksurfaces });
+    }
+    Ok(out)
+}
+
+fn read_marksurfaces(data: &[u8], lump: Lump) -> Result<Vec<u16>> {
+    let count = check_stride(lump, "marksurfaces", 2)?;
+    let mut cur = Cursor::new(lump_slice(data, lump, "marksurfaces")?);
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        out.push(cur.u16()?);
+    }
+    Ok(out)
 }
 
 /// Lump de texturas: tabela de offsets + miptex. Offset -1 marca entrada ausente.
@@ -352,7 +475,15 @@ pub struct TextureImage {
 /// `texindex` é o índice **cru** da tabela de texturas (mesmo número que o
 /// texinfo guarda), não a posição na lista compactada — que pula WADs externos.
 /// Textura com offset `-1` (vem de WAD) ou com mip ausente devolve `None`.
+#[cfg(test)]
 pub fn texture_image(data: &[u8], lump: Lump, texindex: usize) -> Option<TextureImage> {
+    texture_image_for(data, lump, texindex, false)
+}
+
+/// Variante que sabe do Quake: o miptex v29 não carrega paleta própria (o jogo
+/// usa uma global, que não é distribuída com o mapa), então os pixels viram
+/// tons de cinza — dá para reconhecer o padrão da textura, mas não a cor.
+pub fn texture_image_for(data: &[u8], lump: Lump, texindex: usize, quake: bool) -> Option<TextureImage> {
     if lump.length == 0 {
         return None;
     }
@@ -390,10 +521,16 @@ pub fn texture_image(data: &[u8], lump: Lump, texindex: usize) -> Option<Texture
     let pixels = raw.get(mip0..mip0 + need)?.to_vec();
 
     // Paleta de 256 cores termina o lump: os bytes do mip0 são índices nela.
-    if raw.len() < 768 {
-        return None;
-    }
-    let palette = &raw[raw.len() - 768..];
+    let gray_palette: Vec<u8>;
+    let palette: &[u8] = if quake {
+        gray_palette = (0..=255u8).flat_map(|v| [v, v, v]).collect();
+        &gray_palette
+    } else {
+        if raw.len() < 768 {
+            return None;
+        }
+        &raw[raw.len() - 768..]
+    };
 
     // Só textura `{`-prefixada usa o índice 255 como buraco (convenção do
     // Quake/GoldSrc — grade, cerca, vidro); numa textura comum é só mais uma cor.

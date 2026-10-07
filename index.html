@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -12,38 +12,62 @@
         <span class="mark"></span>
         <h1>bsp-museum</h1>
       </div>
-      <nav class="seg nav-view" role="tablist" aria-label="seção">
-        <button id="nav-maps" class="active" aria-pressed="true">Mapas</button>
-        <button id="nav-resources" aria-pressed="false">Recursos</button>
+      <nav class="seg nav-view" role="tablist" aria-label="seção" data-i18n-aria="nav.aria">
+        <button id="nav-maps" class="active" aria-pressed="true" data-i18n="nav.maps">Mapas</button>
+        <button id="nav-resources" aria-pressed="false" data-i18n="nav.resources">Recursos</button>
       </nav>
-      <div class="controls" id="map-controls">
-        <label class="sr-only" for="search">filtrar mapas</label>
-        <input
-          id="search"
-          type="search"
-          placeholder="filtrar por nome, título ou modo…"
-          autocomplete="off"
-          aria-label="filtrar por nome, título ou modo"
-        />
-        <label class="sr-only" for="mode-filter">modo de jogo</label>
-        <select id="mode-filter" title="modo de jogo" aria-label="modo de jogo">
-          <option value="">todos os modos</option>
-        </select>
-        <label class="sr-only" for="sort">ordenação</label>
-        <select id="sort" title="ordenação" aria-label="ordenação">
-          <option value="name">nome</option>
-          <option value="size">tamanho do arquivo</option>
-          <option value="spawns">spawns</option>
-          <option value="area">área do mapa</option>
-          <option value="problems">problemas primeiro</option>
-        </select>
-        <label class="slots" title="slots do servidor — quantos jogadores o mapa precisa aguentar">
-          <span>slots</span>
-          <input id="slots" type="number" min="2" max="128" step="1" value="32" />
-        </label>
-        <button id="pick">escolher pasta…</button>
+      <div class="tools">
+        <button id="lang-toggle" class="ghost2" data-i18n-title="tools.lang" title="idioma">PT</button>
+        <button id="theme-toggle" class="ghost2" data-i18n-title="tools.theme" title="tema" aria-label="tema">◐</button>
       </div>
     </header>
+
+    <div class="filterbar" id="map-controls">
+      <label class="sr-only" for="search" data-i18n="filter.search.label">filtrar mapas</label>
+      <input
+        id="search"
+        type="search"
+        data-i18n-ph="filter.search.ph"
+        placeholder="filtrar por nome, título, modo ou tag…"
+        autocomplete="off"
+      />
+      <label class="sr-only" for="mode-filter" data-i18n="filter.mode">modo de jogo</label>
+      <select id="mode-filter" data-i18n-title="filter.mode" title="modo de jogo">
+        <option value="" data-i18n="filter.mode.all">todos os modos</option>
+      </select>
+      <label class="sr-only" for="sev-filter" data-i18n="filter.severity">gravidade</label>
+      <select id="sev-filter" data-i18n-title="filter.severity" title="gravidade">
+        <option value="" data-i18n="filter.severity.any">qualquer situação</option>
+        <option value="critical" data-i18n="filter.severity.critical">com problema crítico</option>
+        <option value="warn" data-i18n="filter.severity.warn">com aviso</option>
+        <option value="clean" data-i18n="filter.severity.clean">sem problemas</option>
+      </select>
+      <label class="sr-only" for="rule-filter" data-i18n="filter.rule">regra</label>
+      <select id="rule-filter" data-i18n-title="filter.rule" title="regra do diagnóstico">
+        <option value="" data-i18n="filter.rule.any">qualquer regra</option>
+      </select>
+      <label class="sr-only" for="tag-filter" data-i18n="filter.tag">tag</label>
+      <select id="tag-filter" data-i18n-title="filter.tag" title="tag">
+        <option value="" data-i18n="filter.tag.any">todas as tags</option>
+      </select>
+      <button id="fav-only" class="ghost2" aria-pressed="false" data-i18n-title="filter.fav" title="só favoritos">☆</button>
+      <label class="sr-only" for="sort" data-i18n="sort.label">ordenação</label>
+      <select id="sort" data-i18n-title="sort.label" title="ordenação">
+        <option value="name" data-i18n="sort.name">nome</option>
+        <option value="size" data-i18n="sort.size">tamanho do arquivo</option>
+        <option value="spawns" data-i18n="sort.spawns">spawns</option>
+        <option value="area" data-i18n="sort.area">área do mapa</option>
+        <option value="problems" data-i18n="sort.problems">problemas primeiro</option>
+      </select>
+      <label class="slots" data-i18n-title="slots.title" title="slots do servidor — quantos jogadores o mapa precisa aguentar">
+        <span data-i18n="slots.label">slots</span>
+        <input id="slots" type="number" min="2" max="128" step="1" value="32" />
+      </label>
+      <span class="spacer"></span>
+      <button id="compare" disabled data-i18n="compare.button">comparar</button>
+      <button id="audit" data-i18n="audit.button" data-i18n-title="audit.title" title="roda o diagnóstico completo em todos os mapas da pasta">auditar pasta</button>
+      <button id="pick" data-i18n="pick.button">escolher pasta…</button>
+    </div>
 
     <div id="status" class="status" role="status"></div>
 
@@ -51,30 +75,55 @@
 
     <section id="resources" class="resources" hidden aria-live="polite">
       <div class="res-toolbar">
-        <button id="res-pick">escolher pasta do mod…</button>
+        <button id="res-pick" data-i18n="mdl.pick">escolher pasta do mod…</button>
         <span id="res-root" class="dim"></span>
       </div>
       <div class="res-layout">
-        <div class="res-col" id="res-dirs" aria-label="pastas com modelos"></div>
-        <div class="res-col" id="res-files" aria-label="arquivos .mdl"></div>
+        <div class="res-col" id="res-dirs" aria-label="pastas com modelos" data-i18n-aria="mdl.dirsAria"></div>
+        <div class="res-col" id="res-files" aria-label="arquivos .mdl" data-i18n-aria="mdl.filesAria"></div>
         <div class="res-viewer-wrap">
           <div class="res-viewer-toolbar" id="res-viewer-toolbar" hidden>
-            <label class="chk-seq" title="a sequência é só metadado nesta versão — trocar não muda a pose desenhada">
-              sequência
+            <label class="chk-seq">
+              <span data-i18n="mdl.sequence">sequência</span>
               <select id="res-sequence"></select>
-              <span class="hintc">(pose de repouso — animação ainda não decodificada)</span>
             </label>
+            <button id="res-play" type="button" data-i18n="mdl.play">tocar</button>
+            <input id="res-frame" type="range" min="0" max="0" step="1" value="0" aria-label="quadro" data-i18n-aria="mdl.frame" />
+            <span id="res-frame-label" class="hintc">–</span>
+            <label class="chk-seq">
+              <span data-i18n="mdl.speed">velocidade</span>
+              <select id="res-speed">
+                <option value="0.25">0,25×</option>
+                <option value="0.5">0,5×</option>
+                <option value="1" selected>1×</option>
+                <option value="2">2×</option>
+              </select>
+            </label>
+            <label class="chk-seq" id="res-skin-wrap" hidden>
+              <span data-i18n="mdl.skin">skin</span>
+              <select id="res-skin"></select>
+            </label>
+            <span id="res-anim-note" class="hintc"></span>
           </div>
           <div class="res-viewer3d" id="res-viewer3d"></div>
         </div>
       </div>
     </section>
 
-    <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-label="detalhes do mapa" hidden>
-      <button id="close-drawer" class="close" aria-label="fechar">×</button>
+    <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-label="detalhes do mapa" data-i18n-aria="detail.aria" hidden>
+      <button id="close-drawer" class="close" aria-label="fechar" data-i18n-aria="common.close">×</button>
       <div id="drawer-body"></div>
     </aside>
     <div id="scrim" class="scrim" hidden></div>
+
+    <div id="modal-scrim" class="scrim modal-scrim" hidden></div>
+    <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
+      <header class="modal-head">
+        <h2 id="modal-title"></h2>
+        <button id="modal-close" class="close" data-i18n-aria="common.close" aria-label="fechar">×</button>
+      </header>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -1,7 +1,7 @@
 {
   "name": "bsp-museum",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "Galeria navegável do acervo de mapas GoldSrc (Half-Life / CS 1.6).",
   "scripts": {
@@ -11,7 +11,8 @@
     "tauri": "tauri",
     "app": "tauri dev",
     "app:build": "tauri build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
+    "@types/bun": "^1.4.2",
     "@types/three": "^0.185.4",
     "typescript": "^5.7.3",
     "vite": "^6.0.7"
