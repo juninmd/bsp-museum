@@ -37,8 +37,12 @@ export interface Viewer3DOptions {
   chunks?: Chunk[];
 }
 
-/** Lightmap do GoldSrc é "overbright": 128 é neutro, então a luz multiplica por 2. */
-const LIGHTMAP_INTENSITY = 2;
+/**
+ * Lightmap do GoldSrc é "overbright": 128 é neutro, então a luz multiplica por 2.
+ * O `MeshBasicMaterial` do Three.js ainda divide o lightmap por π (convenção de
+ * irradiância), então o fator precisa de `π` para o texel 128 sair como 1,0.
+ */
+const LIGHTMAP_INTENSITY = 2 * Math.PI;
 
 function buildTextures(mesh: MeshDetail): (THREE.Texture | null)[] {
   return mesh.textures.map((t) => {
@@ -116,7 +120,8 @@ export function mount3D(
   let lightmapTex: THREE.Texture | null = null;
   if (mesh.lightmap && mesh.lm_uvs.length) {
     lightmapTex = new THREE.TextureLoader().load(mesh.lightmap);
-    lightmapTex.colorSpace = THREE.SRGBColorSpace;
+    // valores já em escala de exibição: lidos crus (128 -> 0,5), não decodificados como sRGB
+    lightmapTex.colorSpace = THREE.NoColorSpace;
     lightmapTex.flipY = false; // mesma convenção da textura: linha 0 do atlas em v=0
     lightmapTex.channel = 1; // uv1
     lightmapTex.minFilter = THREE.LinearFilter;
@@ -171,6 +176,8 @@ export function mount3D(
 
   // Enquadra a câmera no modelo 0.
   const { center, size } = fitTarget(mesh);
+  // piso do no-clip: logo abaixo do mapa (o eixo Y do Three.js é o Z do mapa, que pode ser negativo)
+  const floorY = center[1] - size[1] / 2 - 64;
   const maxDim = Math.max(size[0], size[1], size[2], 1);
   const dist = (maxDim / 2 / Math.tan((camera.fov * Math.PI) / 360)) * 1.4;
   camera.position.set(center[0] + dist * 0.8, center[1] + dist * 0.7, center[2] + dist);
@@ -261,8 +268,11 @@ export function mount3D(
     pitch = clampPitch(pitch - e.movementY * sens);
   }
 
+  const FPS_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "KeyC", "Space", "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight"]);
   function onKeyDown(e: KeyboardEvent) {
     if (mode !== "fps") return;
+    // Space/Ctrl não podem acionar o botão focado nem rolar a página
+    if (FPS_KEYS.has(e.code)) e.preventDefault();
     fpKeys.add(e.code);
   }
   function onKeyUp(e: KeyboardEvent) {
@@ -297,7 +307,7 @@ export function mount3D(
     if (fpKeys.has("ControlLeft") || fpKeys.has("ControlRight") || fpKeys.has("KeyC")) tmpMove.y -= v;
 
     camera.position.add(tmpMove);
-    if (camera.position.y < 1) camera.position.y = 1;
+    if (camera.position.y < floorY) camera.position.y = floorY;
     camera.rotation.order = "YXZ";
     camera.rotation.set(pitch, yaw, 0);
   }
@@ -306,6 +316,7 @@ export function mount3D(
     if (mode === "fps") return;
     mode = "fps";
     controls.enabled = false;
+    (document.activeElement as HTMLElement | null)?.blur();
     // Inicia em um ponto de spawn (ou no centro) sem colisão — no-clip.
     const spawn = mesh.spawns[0];
     const start: [number, number, number] = spawn
@@ -512,7 +523,7 @@ function loadSky(
     const materials = urls.map(
       (url) =>
         new THREE.MeshBasicMaterial({
-          map: new THREE.TextureLoader().load(url),
+          map: skyTexture(url),
           side: THREE.BackSide,
           depthWrite: false,
           fog: false,
@@ -526,6 +537,12 @@ function loadSky(
     return cube;
   }
   return makeSkyDome(center, radius);
+}
+
+function skyTexture(url: string): THREE.Texture {
+  const tex = new THREE.TextureLoader().load(url);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 /** Domo celeste de reserva: esfera gigante com um gradiente vertical, vista por dentro. */

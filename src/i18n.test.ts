@@ -153,3 +153,19 @@ describe("relatório", () => {
     expect(text).toBe("maps/x.bsp\n");
   });
 });
+
+describe("CSV seguro", () => {
+  test("célula que começa com = vira texto, e o arquivo leva BOM", () => {
+    setLang("pt");
+    const report: AuditReport = {
+      dir: "/x",
+      slots: 2,
+      duplicates: [],
+      rows: [{ name: "=HYPERLINK(1)", path: "/x/a.bsp", file_size: 10, mode: "unknown", ct_spawns: 0, t_spawns: 0, bsp_version: 30, error: null, findings: [] }],
+    };
+    const csv = auditCsv(report);
+    expect(csv.startsWith("﻿")).toBe(true);
+    expect(csv).toContain("'=HYPERLINK(1)");
+    expect(csv).not.toContain("\n=HYPERLINK");
+  });
+});

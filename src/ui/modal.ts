@@ -6,6 +6,8 @@ const title = () => document.querySelector<HTMLElement>("#modal-title")!;
 const body = () => document.querySelector<HTMLElement>("#modal-body")!;
 
 let returnFocus: HTMLElement | null = null;
+/** identifica o diálogo aberto: trabalho assíncrono antigo não escreve no diálogo de outro */
+let generation = 0;
 let onClose: (() => void) | null = null;
 
 function onKey(e: KeyboardEvent) {
@@ -15,8 +17,12 @@ function onKey(e: KeyboardEvent) {
   } else trapTab(modal(), e);
 }
 
-/** Abre o diálogo genérico (comparação, auditoria). Devolve o corpo para preencher. */
-export function openModal(heading: string, close?: () => void): HTMLElement {
+/**
+ * Abre o diálogo genérico (comparação, auditoria). Devolve o corpo para preencher e
+ * `alive()`, que vira falso quando o diálogo foi fechado ou substituído por outro.
+ */
+export function openModal(heading: string, close?: () => void): { body: HTMLElement; alive: () => boolean } {
+  const mine = ++generation;
   returnFocus = document.activeElement as HTMLElement | null;
   onClose = close ?? null;
   title().textContent = heading;
@@ -25,11 +31,12 @@ export function openModal(heading: string, close?: () => void): HTMLElement {
   scrim().hidden = false;
   document.addEventListener("keydown", onKey, true);
   document.querySelector<HTMLButtonElement>("#modal-close")!.focus();
-  return body();
+  return { body: body(), alive: () => mine === generation && !modal().hidden };
 }
 
 export function closeModal(): void {
   if (modal().hidden) return;
+  generation++;
   modal().hidden = true;
   scrim().hidden = true;
   document.removeEventListener("keydown", onKey, true);

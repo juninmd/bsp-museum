@@ -63,15 +63,16 @@ export async function openAudit(
   onOpen: (path: string) => void,
   setStatus: (text: string, tone?: "info" | "error") => void,
 ): Promise<void> {
-  const body = openModal(t("audit.title2"));
+  const { body, alive } = openModal(t("audit.title2"));
   body.innerHTML = `<div class="loading">${escapeHtml(t("audit.running"))}</div>`;
   let report: AuditReport;
   try {
     report = await invoke<AuditReport>("audit_folder", { dir, slots });
   } catch (err) {
-    body.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
+    if (alive()) body.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
     return;
   }
+  if (!alive()) return;
   body.innerHTML = renderAudit(report);
   body.querySelectorAll<HTMLButtonElement>("[data-fmt]").forEach((btn) =>
     btn.addEventListener("click", async () => {

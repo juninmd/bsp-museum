@@ -22,7 +22,15 @@ export interface DetailContext {
 const SEVERITY_ICON: Record<Finding["severity"], string> = { critical: "✖", warn: "▲", info: "•" };
 
 /** malha 3D e chunks por caminho: só são pedidos/montados na primeira vez que abre a aba 3D */
+const MESH_CACHE_MAX = 3;
 const meshCache = new Map<string, { mesh: MeshDetail; chunks: Chunk[] }>();
+
+/** guarda no cache descartando o mais antigo: malhas grandes passam de dezenas de MB */
+function cacheMesh(path: string, entry: { mesh: MeshDetail; chunks: Chunk[] }): void {
+  meshCache.delete(path);
+  meshCache.set(path, entry);
+  while (meshCache.size > MESH_CACHE_MAX) meshCache.delete(meshCache.keys().next().value as string);
+}
 
 let activeViewer: Viewer3D | null = null;
 let cleanup: (() => void) | null = null;
@@ -221,8 +229,9 @@ export function wireDetail(root: HTMLElement, d: MapDetail, map: MapSummary, ctx
   const fsBtn = $<HTMLButtonElement>(root, "#fullscreen");
   const cameraLabel = $<HTMLElement>(root, "#camera-label");
   const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-view]"));
-  let mode: ViewMode = "plan";
   let hud: HTMLElement | null = null;
+  /** invalida chamadas de `setMode` antigas (clique duplo, troca de aba, gaveta fechada) */
+  let seq = 0;
 
   // ----- exportar planta
   $<HTMLButtonElement>(root, "#export").addEventListener("click", async () => {
@@ -265,9 +274,9 @@ export function wireDetail(root: HTMLElement, d: MapDetail, map: MapSummary, ctx
   document.addEventListener("fullscreenchange", onFsChange);
 
   const setMode = async (next: ViewMode): Promise<void> => {
+    const mine = ++seq;
     activeViewer?.dispose();
     activeViewer = null;
-    mode = next;
     planHolder.hidden = next !== "plan";
     viewerHolder.hidden = next === "plan";
     for (const b of buttons) b.classList.toggle("active", b.dataset.view === next);
@@ -286,13 +295,14 @@ export function wireDetail(root: HTMLElement, d: MapDetail, map: MapSummary, ctx
       try {
         const mesh = await invoke<MeshDetail>("map_mesh", { path: d.summary.path });
         cached = { mesh, chunks: await buildChunksAsync(mesh) };
-        meshCache.set(d.summary.path, cached);
+        cacheMesh(d.summary.path, cached);
       } catch (err) {
+        if (mine !== seq) return;
         viewerHolder.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
         return;
       }
     }
-    if (mode !== next) return; // trocou de aba enquanto carregava
+    if (mine !== seq) return; // outra troca de aba (ou o fechamento) veio durante o carregamento
     viewerHolder.replaceChildren();
     hud = document.createElement("div");
     hud.className = "hud";
@@ -303,6 +313,7 @@ export function wireDetail(root: HTMLElement, d: MapDetail, map: MapSummary, ctx
     activeViewer = mount3D(viewerHolder, mesh, { textured: next === "tex", chunks });
     activeViewer.setLightmaps(lmBox.checked);
     activeViewer.setPvs(pvsBox.checked);
+    activeViewer.setTransparent(alphaBox.checked);
     activeViewer.onStats((s) => {
       if (!hud) return;
       const leaf = s.leaf >= 0 ? ` · ${t("viewer.leaf", s.leaf)}` : "";
@@ -464,6 +475,7 @@ export function wireDetail(root: HTMLElement, d: MapDetail, map: MapSummary, ctx
   });
 
   cleanup = () => {
+    seq++; // qualquer carregamento em andamento descarta o resultado
     document.removeEventListener("pointerlockchange", onPointerLock);
     document.removeEventListener("fullscreenchange", onFsChange);
     window.clearTimeout(entDebounce);

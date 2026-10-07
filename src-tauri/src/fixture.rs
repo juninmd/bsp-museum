@@ -265,7 +265,7 @@ fn lightmap_of(quad: &Quad) -> (usize, usize, Vec<u8>) {
     for j in 0..lh {
         for i in 0..lw {
             let p = add(quad.origin, add(scale(quad.u, (i * 16) as f32), scale(quad.v, (j * 16) as f32)));
-            let mut rgb = [0.17f32, 0.18f32, 0.22f32]; // ambiente
+            let mut rgb = [0.07f32, 0.08f32, 0.1f32]; // ambiente
             for (leaf, pos, color, radius) in LIGHTS {
                 if !quad.leaves.contains(&leaf) {
                     continue;
@@ -279,11 +279,12 @@ fn lightmap_of(quad: &Quad) -> (usize, usize, Vec<u8>) {
                 let lambert = dot(n, scale(to, 1.0 / dist.max(1e-3))).abs();
                 let fall = (1.0 - dist / radius).powi(2);
                 for c in 0..3 {
-                    rgb[c] += color[c] * lambert * fall * 1.6;
+                    rgb[c] += color[c] * lambert * fall * 1.3;
                 }
             }
             for c in rgb {
-                out.push((c.clamp(0.0, 1.0) * 255.0) as u8);
+                // 128 é neutro no lightmap do GoldSrc (o viewer multiplica por 2): a luz forte passa de 128
+                out.push((c.clamp(0.0, 1.0) * 255.0 * 0.6) as u8);
             }
         }
     }

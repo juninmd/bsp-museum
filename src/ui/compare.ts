@@ -80,12 +80,14 @@ export function renderComparison(c: Comparison): string {
 }
 
 export async function openCompare(a: MapSummary, b: MapSummary, slots: number): Promise<void> {
-  const body = openModal(t("cmp.title", a.name, b.name));
+  const { body, alive } = openModal(t("cmp.title", a.name, b.name));
   body.innerHTML = `<div class="loading">${escapeHtml(t("common.loading"))}</div>`;
   try {
     const result = await invoke<Comparison>("compare_maps", { a: a.path, b: b.path, slots });
+    if (!alive()) return;
     body.innerHTML = renderComparison(result);
   } catch (err) {
+    if (!alive()) return;
     body.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
   }
 }

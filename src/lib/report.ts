@@ -48,7 +48,9 @@ export function sortedRows(report: AuditReport): AuditRow[] {
 }
 
 function csvCell(value: string | number): string {
-  const text = String(value);
+  let text = String(value);
+  // nome de arquivo começando com = + - @ viraria fórmula ao abrir no Excel/Sheets
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
   return /[",\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
@@ -61,7 +63,8 @@ export function auditCsv(report: AuditReport): string {
     else if (row.findings.length === 0) lines.push([...base, "ok", "", ""].map(csvCell).join(","));
     else for (const f of row.findings) lines.push([...base, f.severity, f.id, findingText(f).title].map(csvCell).join(","));
   }
-  return lines.join("\n") + "\n";
+  // BOM: sem ele o Excel abre o UTF-8 como ANSI e quebra os acentos
+  return "\uFEFF" + lines.join("\n") + "\n";
 }
 
 const SEV_ICON: Record<Severity, string> = { critical: "✖", warn: "▲", info: "•" };

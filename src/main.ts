@@ -219,7 +219,11 @@ function render() {
 
 // ------------------------------------------------------------------ detalhe
 
+/** invalida `openDetail` antigos: o último pedido vence, e fechar a gaveta cancela o pendente */
+let detailRequest = 0;
+
 async function openDetail(map: MapSummary, trigger?: HTMLElement) {
+  const mine = ++detailRequest;
   lastFocused = trigger ?? (document.activeElement as HTMLElement | null);
   drawer.hidden = false;
   scrim.hidden = false;
@@ -229,9 +233,11 @@ async function openDetail(map: MapSummary, trigger?: HTMLElement) {
 
   try {
     const detail = await invoke<MapDetail>("map_detail", { path: map.path, slots: settings.slots });
+    if (mine !== detailRequest) return;
     current = { map, detail };
     renderCurrentDetail();
   } catch (err) {
+    if (mine !== detailRequest) return;
     drawerBody.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
   }
 }
@@ -257,6 +263,7 @@ function onDrawerKeydown(e: KeyboardEvent) {
 }
 
 function closeDrawer() {
+  detailRequest++;
   disposeDetail();
   current = null;
   drawer.hidden = true;
@@ -373,17 +380,22 @@ function renderResFiles(files: string[]) {
   }
 }
 
+let modelRequest = 0;
+
 async function openModel(path: string) {
+  const mine = ++modelRequest;
   resViewer?.dispose();
   resViewer = null;
   resViewerToolbar.hidden = true;
   resViewer3d.innerHTML = `<div class="loading">${escapeHtml(t("mdl.decoding"))}</div>`;
   try {
     const model = await invoke<MdlSummary>("load_model", { path });
+    if (mine !== modelRequest) return; // outro modelo foi escolhido enquanto este carregava
     resViewer3d.replaceChildren();
     resViewer = mountModelViewer(resViewer3d, model, path);
     resViewerToolbar.hidden = model.sequences.length === 0;
   } catch (err) {
+    if (mine !== modelRequest) return;
     resViewer3d.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
   }
 }
