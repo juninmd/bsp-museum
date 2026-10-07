@@ -92,6 +92,14 @@ fn cache_key(path: &Path) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+/// Grava por arquivo temporário + renomeação: queda no meio da escrita não deixa o arquivo
+/// pela metade (o `settings.json` guarda favoritos e notas do usuário).
+fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, data)?;
+    std::fs::rename(&tmp, path)
+}
+
 /// Roda trabalho pesado fora da thread da UI: sem isso a janela congela durante
 /// a varredura/auditoria de uma pasta grande.
 async fn blocking<T: Send + 'static>(job: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
@@ -115,14 +123,14 @@ async fn scan_maps(state: tauri::State<'_, AppState>, dir: String) -> Result<Vec
             if let Some(parent) = index_file.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            let _ = std::fs::write(&index_file, raw);
+            let _ = write_atomic(&index_file, raw.as_bytes());
         }
         maps
     })
     .await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn map_thumbnail(state: tauri::State<'_, AppState>, path: String) -> Result<String, String> {
     if let Ok(cache) = state.cache.lock() {
         if let Some(svg) = cache.thumbs.get(&path) {
@@ -226,12 +234,19 @@ async fn export_radar(path: String, out_dir: String) -> Result<Vec<String>, Stri
 }
 
 /// Grava um arquivo de texto (planta SVG, relatório de auditoria, lista de FastDL).
-#[tauri::command]
+#[tauri::command(async)]
 fn export_text(target: String, content: String) -> Result<(), String> {
+    // o frontend só exporta estes formatos; recusar o resto limita o estrago se algum
+    // texto de mapa hostil conseguir injetar script no WebView
+    const ALLOWED: [&str; 6] = ["svg", "txt", "csv", "md", "html", "json"];
+    let ext = Path::new(&target).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+    if !ext.as_deref().is_some_and(|e| ALLOWED.contains(&e)) {
+        return Err(format!("extensão não permitida para exportação: {target}"));
+    }
     std::fs::write(&target, content).map_err(|e| format!("não gravou {target}: {e}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_model_dirs(root: String) -> Result<Vec<catalog::ModelDir>, String> {
     let path = PathBuf::from(&root);
     if !path.is_dir() {
@@ -240,39 +255,41 @@ fn list_model_dirs(root: String) -> Result<Vec<catalog::ModelDir>, String> {
     Ok(catalog::list_model_dirs(&path))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_models(dir: String) -> Result<Vec<String>, String> {
     Ok(catalog::list_models(&PathBuf::from(dir)))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn load_model(path: String) -> Result<catalog::MdlSummary, String> {
     catalog::load_model(&PathBuf::from(path))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn load_sequence(path: String, index: usize) -> Result<mdl::SeqFrames, String> {
     catalog::load_sequence(&PathBuf::from(path), index)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn load_settings(state: tauri::State<'_, AppState>) -> Settings {
-    std::fs::read_to_string(&state.config_file)
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default()
+    let Ok(raw) = std::fs::read_to_string(&state.config_file) else { return Settings::default() };
+    serde_json::from_str(&raw).unwrap_or_else(|_| {
+        // arquivo ilegível: guarda cópia antes que o próximo salvamento o sobrescreva
+        let _ = std::fs::copy(&state.config_file, state.config_file.with_extension("bak"));
+        Settings::default()
+    })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_settings(state: tauri::State<'_, AppState>, settings: Settings) -> Result<(), String> {
     if let Some(parent) = state.config_file.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     let raw = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-    std::fs::write(&state.config_file, raw).map_err(|e| e.to_string())
+    write_atomic(&state.config_file, raw.as_bytes()).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn clear_cache(state: tauri::State<'_, AppState>) -> Result<usize, String> {
     let mut removed = 0;
     if let Ok(entries) = std::fs::read_dir(&state.cache_dir) {

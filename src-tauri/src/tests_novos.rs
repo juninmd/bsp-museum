@@ -313,6 +313,119 @@ fn gerar_dados_das_capturas() {
     put("maps_dir.txt", out.join("cstrike").to_string_lossy().to_string());
 }
 
+// ------------------------------------------------------------------ robustez (revisão)
+
+#[test]
+fn coordenada_gigante_nao_derruba_o_atlas() {
+    use crate::bsp::light::build_atlas;
+    use crate::bsp::Face;
+    let bsp = Bsp {
+        version: 30,
+        vertices: vec![[0.0, 0.0, 0.0], [1e30, 0.0, 0.0], [1e30, 32.0, 0.0], [0.0, 32.0, 0.0]],
+        edges: vec![(0, 1), (1, 2), (2, 3), (3, 0)],
+        surfedges: vec![0, 1, 2, 3],
+        faces: vec![Face { first_edge: 0, num_edges: 4, texinfo: 0, lightofs: 0, styles: [0, 255, 255, 255] }],
+        texinfo_miptex: vec![0],
+        texinfo_vecs: vec![[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]],
+        texinfo_flags: vec![0],
+        lighting: vec![100; 64],
+        ..Default::default()
+    };
+    let atlas = build_atlas(&bsp).expect("atlas");
+    assert!(atlas.faces[0].is_none(), "face absurda fica sem lightmap");
+}
+
+#[test]
+fn milhares_de_faces_cabem_no_atlas() {
+    // 3000 faces de 5x5 texels (com borda) cabem no atlas de 2048x4096: todas recebem luz
+    use crate::bsp::light::build_atlas;
+    use crate::bsp::Face;
+    let mut bsp = Bsp {
+        version: 30,
+        vertices: vec![[0.0, 0.0, 0.0], [32.0, 0.0, 0.0], [32.0, 32.0, 0.0], [0.0, 32.0, 0.0]],
+        edges: vec![(0, 1), (1, 2), (2, 3), (3, 0)],
+        surfedges: vec![0, 1, 2, 3],
+        texinfo_miptex: vec![0],
+        texinfo_vecs: vec![[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]],
+        texinfo_flags: vec![0],
+        lighting: vec![100; 27],
+        ..Default::default()
+    };
+    for _ in 0..3000 {
+        bsp.faces.push(Face { first_edge: 0, num_edges: 4, texinfo: 0, lightofs: 0, styles: [0, 255, 255, 255] });
+    }
+    let atlas = build_atlas(&bsp).unwrap();
+    assert_eq!(atlas.faces.iter().filter(|f| f.is_some()).count(), 3000);
+}
+
+#[test]
+fn textura_da_face_usa_a_tabela_crua_mesmo_com_entrada_ausente() {
+    use crate::bsp::Face;
+    // tabela crua: [ausente, "wall", "sky"]; a lista compacta só tem wall e sky
+    let bsp = Bsp {
+        raw_texture_name: vec![String::new(), "wall".into(), "sky".into()],
+        texinfo_miptex: vec![1, 2],
+        ..Default::default()
+    };
+    let face = |texinfo| Face { first_edge: 0, num_edges: 3, texinfo, lightofs: -1, styles: [0; 4] };
+    assert_eq!(bsp.texture_name_of(&face(0)), Some("wall"));
+    assert_eq!(bsp.texture_name_of(&face(1)), Some("sky"));
+    assert_eq!(bsp.texture_name_of(&face(9)), None);
+}
+
+#[test]
+fn radar_com_limites_errados_nao_trava() {
+    // modelo 0 minúsculo e vértices enormes: antes cada aresta rodava milhões de passos
+    let mut data = museum_bsp(Options::default());
+    // zera os limites do modelo 0 (mins/maxs são os 24 primeiros bytes do lump de modelos)
+    let models_ofs = i32::from_le_bytes(data[4 + 14 * 8..4 + 14 * 8 + 4].try_into().unwrap()) as usize;
+    for k in 0..6 {
+        let v: f32 = if k < 3 { 0.0 } else { 1.0 };
+        data[models_ofs + k * 4..models_ofs + k * 4 + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    let bsp = Bsp::parse(&data).unwrap();
+    let started = std::time::Instant::now();
+    let _ = crate::radar::render(&bsp, 512);
+    assert!(started.elapsed().as_secs() < 5, "radar demorou {:?}", started.elapsed());
+}
+
+#[test]
+fn find_asset_recusa_caminho_fora_do_mod() {
+    let root = std::env::temp_dir().join(format!("bspm-confine-{}", std::process::id()));
+    let mod_dir = root.join("cstrike");
+    std::fs::create_dir_all(mod_dir.join("models")).unwrap();
+    std::fs::write(root.join("segredo.mdl"), b"x").unwrap();
+    std::fs::write(mod_dir.join("models").join("ok.mdl"), b"x").unwrap();
+    assert!(crate::bsp::wad::find_asset(&mod_dir, "models/ok.mdl").is_some());
+    assert!(crate::bsp::wad::find_asset(&mod_dir, "../segredo.mdl").is_none());
+    assert!(crate::bsp::wad::find_asset(&mod_dir, "models/../../segredo.mdl").is_none());
+    let abs = root.join("segredo.mdl").to_string_lossy().to_string();
+    assert!(crate::bsp::wad::find_asset(&mod_dir, &abs).is_none());
+}
+
+#[test]
+fn exportacao_so_grava_extensoes_conhecidas() {
+    let dir = std::env::temp_dir().join(format!("bspm-export-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let ok = dir.join("relatorio.csv");
+    assert!(crate::export_text(ok.to_string_lossy().to_string(), "a,b".into()).is_ok());
+    assert_eq!(std::fs::read_to_string(&ok).unwrap(), "a,b");
+    let ruim = dir.join("autostart.bat");
+    assert!(crate::export_text(ruim.to_string_lossy().to_string(), "calc".into()).is_err());
+    assert!(!ruim.exists());
+}
+
+#[test]
+fn escrita_atomica_substitui_sem_deixar_temporario() {
+    let dir = std::env::temp_dir().join(format!("bspm-atomic-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("settings.json");
+    crate::write_atomic(&f, b"{\"v\":1}").unwrap();
+    crate::write_atomic(&f, b"{\"v\":2}").unwrap();
+    assert_eq!(std::fs::read_to_string(&f).unwrap(), "{\"v\":2}");
+    assert!(!f.with_extension("tmp").exists());
+}
+
 mod erased {
     /// `serde_json::to_string` sem precisar nomear o tipo em cada chamada.
     pub trait Ser {

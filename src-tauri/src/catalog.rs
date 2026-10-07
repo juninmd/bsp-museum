@@ -252,7 +252,8 @@ pub struct IndexEntry {
     pub summary: MapSummary,
 }
 
-pub const INDEX_VERSION: u32 = 2;
+/// Subir sempre que `summarize_file` ou as regras de `entity_findings` mudarem.
+pub const INDEX_VERSION: u32 = 3;
 
 fn stamp(path: &Path) -> (u64, u64) {
     let meta = std::fs::metadata(path).ok();
@@ -274,9 +275,12 @@ pub fn scan_cached(dir: &Path, cache: &mut IndexCache) -> (Vec<MapSummary>, usiz
     let files = find_bsp_files(dir);
     let mut slots: Vec<Option<MapSummary>> = Vec::with_capacity(files.len());
     let mut stale: Vec<(usize, PathBuf)> = Vec::new();
+    // carimbo lido ANTES do resumo: arquivo alterado durante a varredura não fica
+    // com o carimbo novo gravado ao lado do resumo velho
+    let stamps: Vec<(u64, u64)> = files.iter().map(|p| stamp(p)).collect();
     for (i, path) in files.iter().enumerate() {
         let key = path.to_string_lossy().to_string();
-        let (size, mtime) = stamp(path);
+        let (size, mtime) = stamps[i];
         match cache.entries.get(&key) {
             Some(entry) if entry.size == size && entry.mtime == mtime => slots.push(Some(entry.summary.clone())),
             _ => {
@@ -305,7 +309,7 @@ pub fn scan_cached(dir: &Path, cache: &mut IndexCache) -> (Vec<MapSummary>, usiz
         parts.into_iter().flatten().collect()
     };
     for (i, summary) in fresh {
-        let (size, mtime) = stamp(&files[i]);
+        let (size, mtime) = stamps[i];
         cache.entries.insert(files[i].to_string_lossy().to_string(), IndexEntry { size, mtime, summary: summary.clone() });
         slots[i] = Some(summary);
     }
@@ -582,11 +586,9 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
     let mut tri_face: Vec<i32> = Vec::new();
 
     for (face_index, face) in bsp.faces.iter().enumerate() {
-        if let Some(tex) = bsp.texture_of(face) {
-            if render::is_invisible(&tex.name) {
-                skipped += 1;
-                continue;
-            }
+        if bsp.texture_name_of(face).is_some_and(render::is_invisible) {
+            skipped += 1;
+            continue;
         }
         let Some(points) = bsp.face_polygon(face) else {
             skipped += 1;
@@ -669,15 +671,26 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
     // Arquivo `.mdl` ausente ou corrompido é pulado em silêncio: não pode
     // derrubar a leitura do mapa inteiro por causa de um prop.
     let mod_dir = wad::mod_dir_of(path);
+    // O mesmo `.mdl` costuma aparecer em dezenas de entidades: lê, decodifica e envia as
+    // texturas uma vez só e reaproveita a malha em cada instância.
+    let mut prop_cache: HashMap<String, Option<(u32, crate::mdl::MdlModel)>> = HashMap::new();
     for inst in &ents.model_instances {
-        let Some(model_path) = wad::find_asset(&mod_dir, &inst.model) else { continue };
-        let Ok(model_bytes) = std::fs::read(&model_path) else { continue };
-        let Ok(prop) = crate::mdl::parse(&model_bytes) else { continue };
-
-        let base_tex = textures.len() as u32;
-        for t in &prop.textures {
-            textures.push(MeshTexture { name: t.name.clone(), png: Some(t.png.clone()) });
+        let key = inst.model.to_ascii_lowercase();
+        if !prop_cache.contains_key(&key) {
+            let loaded = wad::find_asset(&mod_dir, &inst.model)
+                .and_then(|p| std::fs::read(p).ok())
+                .and_then(|bytes| crate::mdl::parse(&bytes).ok());
+            let entry = loaded.map(|model| {
+                let base = textures.len() as u32;
+                for t in &model.textures {
+                    textures.push(MeshTexture { name: t.name.clone(), png: Some(t.png.clone()) });
+                }
+                (base, model)
+            });
+            prop_cache.insert(key.clone(), entry);
         }
+        let Some((base_tex, prop)) = prop_cache.get(&key).and_then(|e| e.as_ref()) else { continue };
+        let base_tex = *base_tex;
         let place = crate::mdl::entity_transform(inst.origin, inst.angles);
         for v in prop.positions.chunks_exact(3) {
             let world = place([v[0], v[1], v[2]]);

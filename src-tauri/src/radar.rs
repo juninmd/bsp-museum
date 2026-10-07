@@ -50,6 +50,12 @@ fn fill_polygon(buf: &mut [u8], size: usize, pts: &[(f32, f32)], color: [u8; 3])
 }
 
 fn line(buf: &mut [u8], size: usize, a: (f32, f32), b: (f32, f32), color: [u8; 3]) {
+    // modelo 0 com limites errados deixa vértices a milhões de pixels: sem este corte o laço
+    // andaria milhões de passos por aresta
+    let far = size as f32 * 8.0;
+    if [a.0, a.1, b.0, b.1].iter().any(|v| !v.is_finite() || v.abs() > far) {
+        return;
+    }
     let steps = ((b.0 - a.0).abs().max((b.1 - a.1).abs()).ceil() as usize).max(1);
     for i in 0..=steps {
         let t = i as f32 / steps as f32;
@@ -76,7 +82,7 @@ pub fn render(bsp: &Bsp, size: usize) -> Option<Radar> {
     let mut floors: Vec<(f32, Vec<(f32, f32)>)> = Vec::new();
     let mut walls: Vec<Vec<(f32, f32)>> = Vec::new();
     for face in &bsp.faces {
-        if bsp.texture_of(face).is_some_and(|t| is_invisible(&t.name)) {
+        if bsp.texture_name_of(face).is_some_and(is_invisible) {
             continue;
         }
         let Some(points) = bsp.face_polygon(face) else { continue };

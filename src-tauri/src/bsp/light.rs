@@ -133,6 +133,10 @@ pub fn build_atlas(bsp: &Bsp) -> Option<Atlas> {
         let bmax_s = (max_s / 16.0).ceil();
         let bmin_t = (min_t / 16.0).floor();
         let bmax_t = (max_t / 16.0).ceil();
+        // antes dos casts: coordenada gigante (mas finita) saturaria o `as usize` e daria volta no `+ 1`
+        if bmax_s - bmin_s > MAX_LIGHTMAP_SIDE as f32 || bmax_t - bmin_t > MAX_LIGHTMAP_SIDE as f32 {
+            continue;
+        }
         let w = (bmax_s - bmin_s) as usize + 1;
         let h = (bmax_t - bmin_t) as usize + 1;
         if w > MAX_LIGHTMAP_SIDE || h > MAX_LIGHTMAP_SIDE {
@@ -149,7 +153,8 @@ pub fn build_atlas(bsp: &Bsp) -> Option<Atlas> {
         // (w+2)×(h+2) com borda replicada: sem ela o filtro linear sangra a luz
         // do vizinho do atlas na beira da face.
         let (pw, ph) = (w + 2, h + 2);
-        let Some((px, py)) = packer.place(pw, ph) else { break };
+        // atlas cheio: esta face fica sem luz, mas uma menor adiante ainda pode caber
+        let Some((px, py)) = packer.place(pw, ph) else { continue };
         let mut block = vec![255u8; pw * ph * 4];
         for y in 0..ph {
             let sy = y.saturating_sub(1).min(h - 1);

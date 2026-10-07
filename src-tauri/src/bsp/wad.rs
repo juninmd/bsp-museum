@@ -35,6 +35,11 @@ pub fn mod_dir_of(map_path: &Path) -> PathBuf {
 /// Acha um arquivo (WAD, `.mdl`, qualquer coisa) na pasta do mod, ou no `valve/`
 /// irmão dela quando o mod é `cstrike` e o recurso é herdado do Half-Life base.
 pub fn find_asset(mod_dir: &Path, rel_path: &str) -> Option<PathBuf> {
+    // caminho vindo do mapa (`model`, `.res`, `skyname`): nada de `..` nem caminho absoluto
+    use std::path::Component;
+    if !Path::new(rel_path).components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir)) {
+        return None;
+    }
     let in_mod = mod_dir.join(rel_path);
     if in_mod.is_file() {
         return Some(in_mod);

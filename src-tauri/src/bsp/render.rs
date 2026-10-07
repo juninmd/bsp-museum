@@ -154,11 +154,9 @@ pub fn top_down(bsp: &Bsp, spawns: &[SpawnPoint], opts: RenderOptions) -> Render
     let mut skipped = 0usize;
 
     for face in &bsp.faces {
-        if let Some(tex) = bsp.texture_of(face) {
-            if is_invisible(&tex.name) {
-                skipped += 1;
-                continue;
-            }
+        if bsp.texture_name_of(face).is_some_and(is_invisible) {
+            skipped += 1;
+            continue;
         }
         let Some(points3) = bsp.face_polygon(face) else {
             skipped += 1;

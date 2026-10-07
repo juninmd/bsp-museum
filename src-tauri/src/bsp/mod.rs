@@ -307,6 +307,14 @@ impl Bsp {
         Some(points)
     }
 
+    /// Nome da textura da face, pela tabela crua (o índice do texinfo). `textures` é a lista
+    /// compacta (sem as entradas `-1`), então indexá-la com o índice cru erra a textura.
+    pub fn texture_name_of(&self, face: &Face) -> Option<&str> {
+        let miptex = *self.texinfo_miptex.get(face.texinfo as usize)? as usize;
+        self.raw_texture_name.get(miptex).map(String::as_str).filter(|n| !n.is_empty())
+    }
+
+    #[cfg(test)]
     pub fn texture_of(&self, face: &Face) -> Option<&Texture> {
         let miptex = *self.texinfo_miptex.get(face.texinfo as usize)? as usize;
         self.textures.get(miptex)
