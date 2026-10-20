@@ -63,6 +63,27 @@ Documentação e fontes usadas para implementar a vista 3D e a decodificação d
   ambiente — só foi validada com um modelo sintético (montado byte a byte no teste). Se um modelo
   com mais de um bone sair com a pose torta, é o primeiro lugar a revisar.
 
+### Extras do `.mdl` (controladores, blends, bodygroups, remap, eventos)
+
+Conferidos contra código aberto neste ciclo (não há `.mdl` real no repositório):
+
+- **HLSDK (`ValveSoftware/halflife`)**: `engine/studio.h` (todos os layouts e flags `STUDIO_NF_*`/`STUDIO_*`),
+  `cl_dll/StudioModelRenderer.cpp` (`StudioCalcBoneAdj`, `StudioCalcBoneQuaterion`/`Position`,
+  `StudioCalcRotations` com o `motiontype`, `StudioSetupBones` com os blends 2/4, `StudioSlerpBones`),
+  `dlls/animation.cpp` (`SetController`, `SetBlending`, `SetBodygroup`/`GetBodygroup`: `(body / base) % nummodels`),
+  `cl_dll/entity.cpp` (`HUD_StudioEvent`: 5001/5011/5021/5031 flash, 5002 faísca, 5004 som) e `dlls/scriptevent.h`
+  (eventos de script 1000..1010).
+  - <https://github.com/ValveSoftware/halflife>
+- **Xash3D FWGS (GPL)**: `engine/common/mod_studio.c` (`nomeT.mdl` copia texturas **e** tabela de skins quando
+  `numtextures == 0`; grupo N = `nome` + `N/10` + `N%10` + `.mdl`; `EVENT_CLIENT` = 5000), `ref/gl/gl_studio.c`
+  (`R_StudioLoadTexture`: `DM_Base*` e `remap*` com os campos de 3 dígitos nas colunas 7, 11 e 15;
+  `R_StudioSetupChrome`), `engine/client/cl_remap.c` (cor de cima na faixa `top_start..top_end`, de baixo em
+  `top_end+1..bottom_end`) e `engine/common/imagelib/img_utils.c` (`Image_PaletteHueReplace`, matiz = cor * 360/255);
+  `common/com_model.h` define `PLATE_HUE_START/END` = 160/191 e `SUIT_HUE_START/END` = 192/223.
+  - <https://github.com/FWGS/xash3d-fwgs>
+- **Não existe no motor aberto**: interpolação de 9 blends (SDK e Xash3D só tratam 1, 2 e 4). A grade 3x3/eixo
+  único usada para as sequências de mira do jogador é uma extensão deste projeto.
+
 ## Renderização 3D no frontend
 
 - **Three.js** (`three` + `@types/three`): cena, `PerspectiveCamera`, `WebGLRenderer`,

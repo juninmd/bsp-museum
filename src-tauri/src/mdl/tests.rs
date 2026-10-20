@@ -79,23 +79,23 @@ struct Syn {
     seq0: usize,
 }
 
-fn put_str(out: &mut Vec<u8>, s: &str, n: usize) {
+pub(super) fn put_str(out: &mut Vec<u8>, s: &str, n: usize) {
     let mut buf = vec![0u8; n];
     buf[..s.len()].copy_from_slice(s.as_bytes());
     out.extend_from_slice(&buf);
 }
 
-fn put_i32(out: &mut Vec<u8>, v: i32) {
+pub(super) fn put_i32(out: &mut Vec<u8>, v: i32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
 
-fn put_f32s(out: &mut Vec<u8>, vs: &[f32]) {
+pub(super) fn put_f32s(out: &mut Vec<u8>, vs: &[f32]) {
     for v in vs {
         out.extend_from_slice(&v.to_le_bytes());
     }
 }
 
-fn put_i16s(out: &mut Vec<u8>, vs: &[i16]) {
+pub(super) fn put_i16s(out: &mut Vec<u8>, vs: &[i16]) {
     for v in vs {
         out.extend_from_slice(&v.to_le_bytes());
     }
@@ -134,7 +134,7 @@ fn bone(name: &str, parent: i32, value: [f32; 6]) -> Vec<u8> {
 }
 
 fn synthetic_anim_mdl() -> Syn {
-    let mut b = vec![0u8; 212]; // header, preenchido no fim
+    let mut b = vec![0u8; 244]; // header, preenchido no fim
 
     let bone_index = off(&b);
     b.extend(bone("root", -1, [10.0, 0.0, 0.0, 0.0, 0.0, 0.0]));
@@ -235,8 +235,9 @@ fn synthetic_anim_mdl() -> Syn {
     for v in [2, bone_index, 0, 0, 0, 0, 2, seq_index, 0, 0, 2, tex_index, 0, 2, 2, skin_index, 1, bodypart_index] {
         put_i32(&mut h, v);
     }
-    assert_eq!(h.len(), 212);
-    b[..212].copy_from_slice(&h);
+    h.resize(244, 0); // numattachments..transitionindex
+    assert_eq!(h.len(), 244);
+    b[..244].copy_from_slice(&h);
 
     Syn { data: b, parse_end, seq0: seq_index as usize }
 }
@@ -259,7 +260,7 @@ fn ext_file() -> Vec<u8> {
     e
 }
 
-fn no_ext(_: u32) -> Option<Vec<u8>> {
+pub(super) fn no_ext(_: u32) -> Option<Vec<u8>> {
     None
 }
 
@@ -276,7 +277,7 @@ fn skin(frames: &SeqFrames, model: &MdlModel, frame: usize) -> Vec<f32> {
     out
 }
 
-fn assert_close(got: &[f32], want: &[f32]) {
+pub(super) fn assert_close(got: &[f32], want: &[f32]) {
     assert_eq!(got.len(), want.len());
     for (g, w) in got.iter().zip(want) {
         assert!((g - w).abs() < 1e-4, "got {got:?}, want {want:?}");
@@ -470,10 +471,10 @@ fn truncar_em_qualquer_offset_da_erro_sem_panic() {
 }
 
 /// Gerador pseudoaleatório determinístico (LCG) — sem dependência externa.
-struct Lcg(u64);
+pub(super) struct Lcg(pub(super) u64);
 
 impl Lcg {
-    fn next(&mut self) -> u32 {
+    pub(super) fn next(&mut self) -> u32 {
         self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
         (self.0 >> 33) as u32
     }
