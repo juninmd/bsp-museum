@@ -1145,6 +1145,8 @@ export function mount3D(
       (ring.material as THREE.Material).dispose();
       (pin.material as THREE.Material).dispose();
       renderer.dispose();
+      // devolve o contexto WebGL já: abrir e fechar a vista várias vezes não pode esgotar os contextos do navegador
+      renderer.forceContextLoss();
       renderer.domElement.remove();
     },
   };

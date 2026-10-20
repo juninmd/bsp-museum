@@ -182,6 +182,8 @@ export class Overlays {
   private lightColors: THREE.Color[] = [];
   private lightStyleIdx: number[] = [];
   private lastLightFrame = -1;
+  private styleDefsSeen: readonly { id: number; values: number[]; fps: number }[] | null = null;
+  private styleById = new Map<number, { id: number; values: number[]; fps: number }>();
   private readonly spriteInsts: SpriteInst[] = [];
   private readonly spriteBanks = new Map<string, SpriteBank>();
   private readonly spriteRequested = new Set<string>();
@@ -200,8 +202,6 @@ export class Overlays {
   private readonly radiusBall: THREE.Mesh;
   /** quantidade de marcadores por camada (para a interface esconder o que não existe) */
   readonly counts: Record<OverlayKey, number> = { lights: 0, sprites: 0, sounds: 0, decals: 0, routes: 0, volumes: 0 };
-  /** o mapa tinha mais entidades do que o teto desenhado */
-  capped = false;
 
   constructor(mesh: MeshDetail, unit: number) {
     this.unit = unit;
@@ -229,16 +229,12 @@ export class Overlays {
     for (const e of entities) {
       if (e.type === "light") {
         if (lights.length < MAX_LIGHTS) lights.push(e);
-        else this.capped = true;
       } else if (e.type === "ambient") {
         if (markers++ < MAX_MARKERS) this.addIconMarker("sounds", this.icons.speaker, e, e.origin, 2.2);
-        else this.capped = true;
       } else if (e.type === "decal") {
         if (markers++ < MAX_MARKERS) this.addIconMarker("decals", this.icons.decal, e, e.origin, 1.6);
-        else this.capped = true;
       } else if (e.type === "sprite") {
         if (this.spriteInsts.length < MAX_SPRITE_INSTANCES) this.addSprite(e);
-        else this.capped = true;
       }
     }
     this.buildLights(lights);
@@ -444,7 +440,11 @@ export class Overlays {
     off: ReadonlySet<number>,
   ): void {
     const inst = this.lightMesh!;
-    const byId = new Map(defs.map((d) => [d.id, d]));
+    if (this.styleDefsSeen !== defs) {
+      this.styleDefsSeen = defs;
+      this.styleById = new Map(defs.map((d) => [d.id, d]));
+    }
+    const byId = this.styleById;
     const c = new THREE.Color();
     for (let i = 0; i < this.lights.length; i++) {
       const style = this.lightStyleIdx[i]!;
@@ -671,10 +671,12 @@ export class Overlays {
 
   /** Primeiro objeto visível sob o raio, ou `null`. */
   pick(raycaster: THREE.Raycaster): Pick | null {
-    const candidates = this.pickables.filter((o) => isShown(o, this.group) && this.categories.get(o.userData.cat as string)?.on !== false);
-    if (!candidates.length) return null;
-    const hits = raycaster.intersectObjects(candidates, false);
-    const hit = hits[0];
+    const shown = this.pickables.filter((o) => isShown(o, this.group) && this.categories.get(o.userData.cat as string)?.on !== false);
+    // marcadores (luz, som, sprite, decalque) têm prioridade sobre volumes: o ícone aparece
+    // por cima de tudo, então o clique nele não pode cair na zona que está na frente
+    const markers = shown.filter((o) => o.userData.cat === undefined);
+    const volumes = shown.filter((o) => o.userData.cat !== undefined);
+    const hit = (markers.length ? raycaster.intersectObjects(markers, false)[0] : undefined) ?? (volumes.length ? raycaster.intersectObjects(volumes, false)[0] : undefined);
     if (!hit) return null;
     if (hit.object === this.lightMesh && hit.instanceId !== undefined) {
       const l = this.lights[hit.instanceId];

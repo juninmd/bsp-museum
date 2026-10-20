@@ -47,6 +47,9 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
   return node;
 }
 
+/** camadas de marcadores: mostram a quantidade mesmo quando é 1 */
+const COUNTED = new Set<LayerName>(["lights", "sprites", "sounds", "decals", "routes"]);
+
 export function createLayersPanel(opts: Options): LayersPanel {
   const { holder, viewer, detail, textured } = opts;
   let dead = false;
@@ -78,17 +81,23 @@ export function createLayersPanel(opts: Options): LayersPanel {
     box.checked = stats[name].on;
     box.addEventListener("change", () => viewer.setLayer(name, box.checked));
     row.append(box, document.createTextNode(` ${label} `));
-    if (stats[name].count > 1 || name === "lights") row.append(el("span", "dim", `(${stats[name].count})`));
+    if (COUNTED.has(name) || stats[name].count > 1) row.append(el("span", "dim", `(${stats[name].count})`));
     if (hint) row.title = hint;
     return row;
   };
 
-  const section = (title: string, rows: (HTMLElement | null)[]): HTMLElement | null => {
+  /** seção recolhível: o painel fica curto e cada grupo abre quando o usuário precisa dele */
+  const collapsible = (title: string, kids: HTMLElement[], open = false): HTMLDetailsElement => {
+    const sec = el("details", "layers-sec");
+    sec.open = open;
+    sec.append(el("summary", undefined, title), ...kids);
+    return sec;
+  };
+
+  const section = (title: string, rows: (HTMLElement | null)[], open = false): HTMLElement | null => {
     const kids = rows.filter((r): r is HTMLElement => r !== null);
     if (!kids.length) return null;
-    const sec = el("section", "layers-sec");
-    sec.append(el("h4", undefined, title), ...kids);
-    return sec;
+    return collapsible(title, kids, open);
   };
 
   // ---------------------------------------------------------------- superfície
@@ -99,12 +108,10 @@ export function createLayersPanel(opts: Options): LayersPanel {
         layerRow("texAnim", t("vw.l.texAnim")),
         layerRow("texAlt", t("vw.l.texAlt"), t("vw.l.texAltHint")),
         layerRow("lightAnim", t("vw.l.lightAnim")),
-      ])
+      ], true)
     : null;
 
   // ---------------------------------------------------------------- hulls
-  const hullSec = el("section", "layers-sec");
-  hullSec.append(el("h4", undefined, t("vw.sec.collision")));
   const hullBtns = el("div", "hull-btns");
   const hullStatus = el("div", "dim small hull-status");
   hullStatus.setAttribute("aria-live", "polite");
@@ -185,18 +192,16 @@ export function createLayersPanel(opts: Options): LayersPanel {
     btn.addEventListener("click", () => void setHull(h, btn.getAttribute("aria-pressed") !== "true", btn));
     hullBtns.append(btn);
   }
-  hullSec.append(hullBtns, hullProgressBar, hullStatus);
+  const hullSec = collapsible(t("vw.sec.collision"), [hullBtns, hullProgressBar, hullStatus]);
 
   // ---------------------------------------------------------------- volumes
-  const volSec = el("section", "layers-sec");
-  volSec.append(el("h4", undefined, t("vw.sec.volumes")));
   const volMaster = el("label", "chk");
   const volBox = el("input");
   volBox.type = "checkbox";
   volMaster.append(volBox, document.createTextNode(` ${t("vw.l.volumes")}`));
   const volLegend = el("div", "vol-legend");
   const volStatus = el("div", "dim small");
-  volSec.append(volMaster, volLegend, volStatus);
+  const volSec = collapsible(t("vw.sec.volumes"), [volMaster, volLegend, volStatus]);
   let volumesLoaded = false;
   let volumesLoading = false;
 
@@ -287,8 +292,13 @@ export function createLayersPanel(opts: Options): LayersPanel {
   ]);
   if (scene) scene.append(spriteStatus);
 
+  // sem dados de colisão/volumes no resumo do mapa, esses grupos nem aparecem
+  const extra = detail.extra;
+  const hasHulls = !extra?.hulls || extra.hulls.some((h) => h.available);
+  const hasVolumes = !extra?.zones || Object.keys(extra.zones).length > 0 || extra.invisible_faces > 0;
   if (surface) panel.append(surface);
-  panel.append(hullSec, volSec);
+  if (hasHulls) panel.append(hullSec);
+  if (hasVolumes) panel.append(volSec);
   if (scene) panel.append(scene);
   panel.append(el("p", "dim small layers-note", t("vw.note")));
 

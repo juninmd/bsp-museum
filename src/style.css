@@ -1312,13 +1312,18 @@ textarea {
   border-bottom: none;
 }
 
-.layers-sec h4 {
+.layers-sec summary {
   margin: 0 0 0.1rem;
   font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--dim);
+  cursor: pointer;
+}
+
+.layers-sec[open] summary {
+  color: var(--text);
 }
 
 .layers-panel .chk {

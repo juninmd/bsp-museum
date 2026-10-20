@@ -770,3 +770,35 @@ fn arvore_grande_cabe_no_orcamento() {
     let r = bsp.hull_polygons(0, 1, 600_000).unwrap();
     eprintln!("{} clipnodes -> {} poligonos em {:?}, truncado={}", bsp.clipnodes.len(), r.polygons.len(), t.elapsed(), r.truncated);
 }
+
+// ------------------------------------------------------------------------------
+// Dados das capturas da vista 3D (não roda no `cargo test` normal):
+//   FIXTURE_DIR=/tmp/fx cargo test gerar_dados_extras_das_capturas -- --ignored
+// Grava, em JSON, o que os comandos `map_detail`, `map_mesh`, `map_hulls`, `map_volumes` e
+// `map_entities` devolvem para o mapa sintético dos recursos extras. O script
+// `scripts/screenshots.mjs` serve isso ao frontend junto com os dados do acervo básico.
+
+#[test]
+#[ignore = "gera dados para as capturas: FIXTURE_DIR=<pasta> cargo test gerar_dados_extras_das_capturas -- --ignored"]
+fn gerar_dados_extras_das_capturas() {
+    use crate::bsp::render::RenderOptions;
+    let out = PathBuf::from(std::env::var("FIXTURE_DIR").expect("defina FIXTURE_DIR"));
+    let maps = out.join("cstrike").join("maps");
+    std::fs::create_dir_all(&maps).unwrap();
+    let path = maps.join("de_extras.bsp");
+    std::fs::write(&path, extra_bsp()).unwrap();
+    let put = |file: &str, text: String| std::fs::write(out.join(file), text).unwrap();
+    let detail = catalog::detail(&path, RenderOptions::detail(), 32).unwrap();
+    put("summary-de_extras.json", serde_json::to_string(&detail.summary).unwrap());
+    put("detail-de_extras.json", serde_json::to_string(&detail).unwrap());
+    put("thumb-de_extras.svg", catalog::thumbnail(&path).unwrap());
+    put("mesh-de_extras.json", serde_json::to_string(&catalog::mesh(&path).unwrap()).unwrap());
+    put("volumes-de_extras.json", serde_json::to_string(&volumes::volumes(&path).unwrap()).unwrap());
+    for hull in [1usize, 2] {
+        let w = hulls::hull_mesh_with(&path, HullQuery { hull, model: 0, offset: 0, limit: 200_000 }).unwrap();
+        put(&format!("hulls-de_extras-{hull}.json"), serde_json::to_string(&w).unwrap());
+    }
+    let bsp = Bsp::parse(&extra_bsp()).unwrap();
+    let parsed = entities::parse(&bsp.entities_raw);
+    put("entities-de_extras.json", serde_json::to_string(&crate::entity_list::list(&bsp, &parsed)).unwrap());
+}

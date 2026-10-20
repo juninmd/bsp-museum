@@ -121,6 +121,30 @@ Space/Ctrl sobe/desce, Shift corre, Esc sai. A vista é orbitável (arraste gire
 Nos mapas `cs_` sem zona de resgate explícita (`func_/info_hostage_rescue`) o aviso é só informativo:
 o GoldSrc resgata o refém perto de qualquer spawn de CT (fallback oficial).
 
+### Vista 3D: painel "Camadas" (v0.7)
+
+Botão **Camadas** no canto do viewer. Cada grupo só aparece se o mapa tem o que mostrar:
+
+- **Superfície** — modos de render das brush entities (`rendermode`/`renderamt`/`rendercolor`/`renderfx`:
+  aditivo, translúcido, cor, alpha-test, pulso e strobe), texturas `scroll*` (esteira/água) com a velocidade do
+  backend, texturas animadas `+0…+9` (10 quadros/s; o botão alterna para a sequência `+A…+J`) e **luz animada**:
+  os lightstyles (`a`..`z` a 10 Hz) somam as camadas do lightmap num shader, e o estilo 0 sai igual ao de sempre.
+- **Colisão (hulls)** — botões 1/2/3. O hull vem em janelas (`map_hulls` paginado por `next_offset`), com barra de
+  progresso e tetos de segurança (400 mil triângulos, 12 janelas), desenhado em aramado + translúcido por cima.
+- **Volumes e zonas** — gatilhos, buyzone, alvo da bomba, resgate, VIP, fuga, escada, água e superfícies
+  invisíveis (`clip`, `aaatrigger`…); a legenda liga/desliga cada categoria e o mouse mostra `message`/`target`.
+- **Cena** — luzes (cor e estilo; as ligáveis alternam ao clicar), `env_sprite`/`env_glow` (o `.spr` é lido com
+  `load_sprite`, com o `tex_format` e o modo de render), sons ambientes (clique: arquivo e raio), decalques, rotas de
+  trem, **animar portas, plataformas e trens** (vai-e-vem entre a posição inicial e a final), névoa (`env_fog`),
+  sol (`light_environment`, no sombreado do modo sem textura) e céu.
+
+| camadas (hull 1, volumes, luzes, sprite, som, decalque) | luz animada | luz estática |
+|---|---|---|
+| ![painel de camadas](prints/v7-3d-camadas.png) | ![luz animada](prints/v7-3d-luz-animada.png) | ![luz estática](prints/v7-3d-luz-estatica.png) |
+
+> Capturas do mapa sintético dos recursos extras (`fixture_extra.rs`), com as texturas de 8×8 do fixture: o chão tem
+> o bloco de luz vermelho do estilo 0 e um bloco verde no estilo 1 — à direita só o estático, ao meio a soma.
+
 ### `de_dust2` no bsp-museum
 
 Planta baixa (chão + paredes + spawns) e vista 3D (cor por altura) do mapa clássico,
@@ -276,6 +300,7 @@ panic), e cada regra do diagnóstico.
 ```bash
 export FIXTURE_DIR=/tmp/museu
 (cd src-tauri && cargo test gerar_dados_das_capturas -- --ignored)   # mapas sintéticos + JSON do backend
+(cd src-tauri && cargo test gerar_dados_extras_das_capturas -- --ignored)   # mapa dos recursos extras (v7-*)
 bun run build
 node scripts/screenshots.mjs $FIXTURE_DIR prints                      # precisa de `playwright`
 ```
@@ -307,8 +332,14 @@ JSON gerados pelo backend em Rust (WebGL via SwiftShader).
   no cliente do CS não foi conferido contra o jogo — ajuste à mão se o radar desalinhar.
 - Estilos de luz: o backend entrega os 4 slots de estilo de cada face (atlas principal + camadas) e os padrões
   (`m`, flicker, pulso…, os de fábrica de memória do `world.cpp` do SDK, sem conferir contra o motor); somar as
-  camadas com os multiplicadores animados é trabalho do viewer. Luz ligável (estilo 32+) começa no estado do
-  `spawnflags`; quem a liga é o gatilho, que o app não simula.
+  camadas com os multiplicadores animados é feito por um shader do viewer (`MeshBasicMaterial` + `onBeforeCompile`).
+  Luz ligável (estilo 32+) começa no estado do `spawnflags`; quem a liga é o gatilho, que o app não simula — no
+  viewer, clicar na esfera da luz alterna o estilo.
+- Vista 3D (camadas): a animação dos movers é uma demonstração em vai-e-vem (o jogo depende de gatilhos); sprites
+  são sempre voltados para a câmera (os tipos `oriented` não são respeitados); o sol só afeta o sombreado do modo
+  sem textura (o modo texturizado usa o lightmap); `renderamt` ausente vale 0, como informa o backend, e uma brush
+  entity translúcida com 0 some; `renderfx` além de pulso, strobe e tremer não anima. Nada disso foi conferido
+  contra o jogo, só contra o código do HLSDK de memória.
 - Hulls de colisão (`headnode[1..3]`) saem como malha por varredura da árvore de clipnodes. Os tamanhos dos hulls
   (em pé ±16×±16×±36, grande ±32, agachado ±16×±16×±18) e a regra "só `contents == -2` é sólido" vêm de memória
   do SDK; nenhum mapa real foi usado para conferir. Hull de brush entity só sai pedindo o modelo.
