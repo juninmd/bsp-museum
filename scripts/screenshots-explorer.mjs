@@ -14,7 +14,8 @@ import { join, resolve } from "node:path";
 
 const out = resolve(process.argv[2] ?? "prints");
 mkdirSync(out, { recursive: true });
-const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? "playwright");
+const pw = await import(process.env.PLAYWRIGHT_MODULE ?? "playwright");
+const chromium = pw.chromium ?? pw.default.chromium; // módulo CJS: o export nomeado some
 
 const port = 4700 + Math.floor(Math.random() * 300);
 const server = spawn("bunx", ["vite", "preview", "--port", String(port), "--strictPort"], { stdio: "ignore" });
@@ -79,7 +80,7 @@ const mock = `
     E("maps/de_dust2.nav", "nav", 220_000), E("maps/de_museu.nav", "nav", 48_000), E("maps/de_museu.txt", "text", 340),
     E("cstrike.wad", "wad", 12_400_000), E("decals.wad", "wad", 380_000), E("custom.wad", "wad", 150_000),
     E("sprites/flame.spr", "sprite", 9200), E("sprites/muzzleflash1.spr", "sprite", 42_000), E("sprites/hud.txt", "text", 2200),
-    E("sprites/smoke.spr", "sprite", 18_000), E("sprites/laserdot.spr", "sprite", 3100),
+    E("sprites/arrow_facing.spr", "sprite", 6200), E("sprites/arrow_oriented.spr", "sprite", 6200), E("sprites/smoke.spr", "sprite", 18_000), E("sprites/laserdot.spr", "sprite", 3100),
     E("models/player/leet/leet.mdl", "model", 410_000), E("models/w_ak47.mdl", "model", 88_000),
     E("sound/ambience/wind2.wav", "sound", 88_300), E("sound/ambience/wind1.wav", "sound", 64_000), E("sound/weapons/ak47-1.wav", "sound", 21_800),
     E("sound/weapons/deagle-1.wav", "sound", 19_000), E("sound/radio/go.wav", "sound", 12_000), E("sound/music/theme.mp3", "sound", 2_400_000),
@@ -119,7 +120,22 @@ const mock = `
     return { ...info, kind: "text", analysis: { type: "text", text: "// " + name + "\\nlinha de exemplo\\nsegunda linha", line_count: 3, bytes: 40, truncated: false } };
   };
 
+  // seta com "UP" no topo e uma barra na base: dá para ver para onde o quad aponta no 3D
+  function arrow(w, h) {
+    return png(w, h, (g) => {
+      g.fillStyle = "rgba(0,0,0,0)"; g.clearRect(0, 0, w, h);
+      g.fillStyle = "#e9c46a"; g.beginPath(); g.moveTo(w / 2, 2); g.lineTo(w - 4, h * 0.45); g.lineTo(w * 0.68, h * 0.45); g.lineTo(w * 0.68, h - 14); g.lineTo(w * 0.32, h - 14); g.lineTo(w * 0.32, h * 0.45); g.lineTo(4, h * 0.45); g.closePath(); g.fill();
+      g.strokeStyle = "#7a4b0a"; g.lineWidth = 3; g.stroke();
+      g.fillStyle = "#2a9d8f"; g.fillRect(4, h - 10, w - 8, 8);
+      g.fillStyle = "#3a2a05"; g.font = "bold 14px sans-serif"; g.textAlign = "center"; g.fillText("UP", w / 2, h * 0.62);
+    });
+  }
   const sprite = (rel) => {
+    if (rel.includes("arrow_")) {
+      const oriented = rel.includes("oriented");
+      return { version: 2, sprite_type: oriented ? "oriented" : "facing_upright", tex_format: oriented ? "index_alpha" : "alpha_test", bounding_radius: 56, max_width: 64, max_height: 96, frame_count: 1, beam_length: 0, sync_type: "sync", additive: false, palette_colors: 256, total_duration: 0,
+        frames: [{ kind: "single", durations: [], images: [{ origin_x: -32, origin_y: 96, width: 64, height: 96, png: arrow(64, 96) }] }] };
+    }
     const additive = !rel.includes("laserdot");
     const frames = Array.from({ length: 8 }, (_, i) => ({ kind: "single", durations: [], images: [{ origin_x: -32, origin_y: 32, width: 64, height: 64, png: glow(64, Math.abs(Math.sin(i / 8 * Math.PI))) }] }));
     return { version: 2, sprite_type: "parallel_upright", tex_format: additive ? "additive" : "alpha_test", bounding_radius: 24, max_width: 64, max_height: 64, frame_count: 8, beam_length: 0, sync_type: "sync", additive, palette_colors: 256, total_duration: 0, frames };
@@ -160,7 +176,7 @@ const mock = `
 })();
 `;
 
-const browser = await chromium.launch({ args: ["--no-sandbox", "--autoplay-policy=no-user-gesture-required"] });
+const browser = await chromium.launch({ args: ["--no-sandbox", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist", "--autoplay-policy=no-user-gesture-required"] });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
 let errors = 0;
 page.on("pageerror", (e) => {
@@ -241,6 +257,45 @@ await page.locator(".exp-list .vrow", { hasText: "flame.spr" }).first().click();
 await page.waitForSelector(".spr-canvas");
 await pause(900);
 await shot("v7-explorador-sprites.png");
+
+await page.setViewportSize({ width: 1440, height: 1060 }); // o painel de controles do 3D é alto
+// 6b. Sprites em 3D: tipo facing_upright (a câmera do mundo aparece como frustum laranja)
+await page.locator(".exp-list .vrow", { hasText: "arrow_facing.spr" }).first().click();
+await page.waitForSelector(".spr-mode-btn");
+await page.click('.spr-mode-btn[data-mode="3d"]');
+await page.waitForSelector(".s3d-canvas");
+await pause(600);
+await shot("v8-sprite-3d.png");
+
+// 6c. aditivo (flame) com a câmera girando sozinha, fundo escuro
+await page.locator(".exp-list .vrow", { hasText: "flame.spr" }).first().click();
+await page.waitForSelector(".spr-mode-btn");
+await page.click('.spr-mode-btn[data-mode="3d"]');
+await page.waitForSelector(".s3d-canvas");
+await page.check(".s3d-auto");
+await pause(1500);
+await shot("v8-sprite-3d-aditivo.png");
+
+// 6d. oriented com angles editados
+await page.locator(".exp-list .vrow", { hasText: "arrow_oriented.spr" }).first().click();
+await page.waitForSelector(".spr-mode-btn");
+await page.click('.spr-mode-btn[data-mode="3d"]');
+await page.waitForSelector(".s3d-angle0");
+await page.fill(".s3d-angle0", "-25");
+await page.fill(".s3d-angle1", "50");
+await page.fill(".s3d-angle2", "15");
+await pause(500);
+await shot("v8-sprite-3d-orientado.png");
+
+// 6e. visão da câmera do jogo, volta ao 2D e troca de sprite (exercita o dispose do WebGL)
+await page.selectOption(".s3d-view", "game");
+await pause(300);
+await shot("v8-sprite-3d-camera-jogo.png");
+await page.click('.spr-mode-btn[data-mode="2d"]');
+await page.waitForSelector(".spr-canvas", { state: "visible" });
+await page.locator(".exp-list .vrow", { hasText: "smoke.spr" }).first().click();
+await pause(400);
+await page.setViewportSize({ width: 1440, height: 900 });
 
 // 7. Áudio
 await page.click('[data-tab="audio"]');

@@ -1,10 +1,12 @@
 // Player de sprites `.spr`: canvas com fundo escolhido, play/pause, fps dos frames simples,
 // tempos dos grupos animados e aditivo simulado (`lighter`) conforme a `tex_format`.
+// Alternador 2D | 3D: o 3D (sprite-3d.ts) reaproveita o mesmo tempo/linha do tempo daqui.
 
 import { t } from "../../i18n.ts";
 import { buildTimeline, segmentAt, timelineDuration, type SpriteSegment } from "../../lib/explorer.ts";
 import type { SpriteInfo, SpriteTexFormat } from "../../types/formats.ts";
 import { esc, factsHtml } from "./common.ts";
+import { createSprite3D, type Sprite3DView } from "./sprite-3d.ts";
 
 type Background = "checker" | "dark" | "light" | "gray" | "green";
 type Blend = "auto" | "normal" | "additive";
@@ -53,6 +55,9 @@ export function mountSpritePlayer(host: HTMLElement, info: SpriteInfo, title: st
     <div class="spr-player">
       <h3 class="exp-title">${esc(title)}</h3>
       <div class="spr-controls">
+        <span class="spr-mode" role="group" aria-label="${esc(t("exp.spr3d.mode"))}">
+          <button type="button" class="spr-mode-btn active" data-mode="2d" aria-pressed="true">${esc(t("exp.spr3d.2d"))}</button><button type="button" class="spr-mode-btn" data-mode="3d" aria-pressed="false">${esc(t("exp.spr3d.3d"))}</button>
+        </span>
         <button type="button" class="spr-play" aria-label="${esc(t("exp.spr.pause"))}">${esc(t("exp.spr.pause"))}</button>
         <label class="spr-ctl"><span>${esc(t("exp.spr.frame"))}</span>
           <input type="range" class="spr-scrub" min="0" max="0" step="1" value="0" aria-label="${esc(t("exp.spr.frame"))}" />
@@ -60,11 +65,11 @@ export function mountSpritePlayer(host: HTMLElement, info: SpriteInfo, title: st
         <label class="spr-ctl"><span>${esc(t("exp.spr.fps"))}</span>
           <input type="range" class="spr-fps" min="1" max="60" step="1" value="10" aria-label="${esc(t("exp.spr.fps"))}" />
           <output class="spr-fps-label">10</output></label>
-        <label class="spr-ctl"><span>${esc(t("exp.spr.zoom"))}</span>
+        <label class="spr-ctl only-2d"><span>${esc(t("exp.spr.zoom"))}</span>
           <select class="spr-zoom">
             <option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option><option value="8">8×</option>
           </select></label>
-        <label class="spr-ctl"><span>${esc(t("exp.spr.bg"))}</span>
+        <label class="spr-ctl only-2d"><span>${esc(t("exp.spr.bg"))}</span>
           <select class="spr-bg">
             <option value="checker">${esc(t("exp.spr.bg.checker"))}</option>
             <option value="dark">${esc(t("exp.spr.bg.dark"))}</option>
@@ -78,9 +83,11 @@ export function mountSpritePlayer(host: HTMLElement, info: SpriteInfo, title: st
             <option value="normal">${esc(t("exp.spr.blend.normal"))}</option>
             <option value="additive">${esc(t("exp.spr.blend.additive"))}</option>
           </select></label>
-        <label class="spr-ctl chk"><input type="checkbox" class="spr-origin" /> <span>${esc(t("exp.spr.origin"))}</span></label>
+        <label class="spr-ctl chk only-2d"><input type="checkbox" class="spr-origin" /> <span>${esc(t("exp.spr.origin"))}</span></label>
       </div>
       <div class="spr-stage"><canvas class="spr-canvas" aria-label="${esc(title)}"></canvas></div>
+      <div class="spr3d-stage" hidden></div>
+      <div class="spr3d-panel" role="group" aria-label="${esc(t("exp.spr3d.panelAria"))}" hidden></div>
       <div class="spr-strip" role="group" aria-label="${esc(t("exp.spr.strip"))}"></div>
       ${factsHtml([
         [t("exp.spr.version"), String(info.version)],
@@ -109,6 +116,11 @@ export function mountSpritePlayer(host: HTMLElement, info: SpriteInfo, title: st
   const blendSel = q<HTMLSelectElement>(".spr-blend");
   const originChk = q<HTMLInputElement>(".spr-origin");
   const strip = q<HTMLElement>(".spr-strip");
+  const stage2d = q<HTMLElement>(".spr-stage");
+  const stage3d = q<HTMLElement>(".spr3d-stage");
+  const panel3d = q<HTMLElement>(".spr3d-panel");
+  const modeBtns = [...host.querySelectorAll<HTMLButtonElement>(".spr-mode-btn")];
+  const root = q<HTMLElement>(".spr-player");
 
   // imagens decodificadas, por [frame][imagem]
   const imgs: HTMLImageElement[][] = info.frames.map((f) =>
@@ -128,6 +140,8 @@ export function mountSpritePlayer(host: HTMLElement, info: SpriteInfo, title: st
   let raf = 0;
   let last = 0;
   let disposed = false;
+  let mode: "2d" | "3d" = "2d";
+  let view3d: Sprite3DView | null = null;
   bgSel.value = defaultBackground(info.tex_format);
 
   function timelineHasMany(): boolean {
@@ -152,6 +166,12 @@ export function mountSpritePlayer(host: HTMLElement, info: SpriteInfo, title: st
 
   function draw() {
     if (disposed) return;
+    if (mode === "3d") {
+      // o 3D só troca a textura quando a chave do frame muda (ver segmentKey)
+      view3d?.setSegment(timeline[currentIndex()]);
+      updateHud();
+      return;
+    }
     const zoom = Number(zoomSel.value) || 1;
     const w = Math.max(64, info.max_width + 16);
     const h = Math.max(64, info.max_height + 16);
@@ -184,7 +204,14 @@ export function mountSpritePlayer(host: HTMLElement, info: SpriteInfo, title: st
       ctx.lineTo(cx + 0.5, cy + 6 * zoom);
       ctx.stroke();
     }
-    scrub.value = String(seg === undefined ? 0 : currentIndex());
+    updateHud();
+  }
+
+  /** Cursor, rótulo do frame e miniatura ativa (iguais em 2D e 3D). */
+  function updateHud() {
+    const seg = timeline[currentIndex()];
+    if (!seg) return;
+    scrub.value = String(currentIndex());
     const frameNo = seg.frame + 1;
     const inGroup = info.frames[seg.frame]?.kind === "group";
     scrubLabel.textContent = inGroup
@@ -258,7 +285,30 @@ export function mountSpritePlayer(host: HTMLElement, info: SpriteInfo, title: st
     buildStrip();
     draw();
   });
-  for (const c of [zoomSel, bgSel, blendSel, originChk]) c.addEventListener("change", draw);
+  for (const c of [zoomSel, bgSel, originChk]) c.addEventListener("change", draw);
+  blendSel.addEventListener("change", () => {
+    view3d?.setBlend(blendSel.value as Blend);
+    draw();
+  });
+
+  function setMode(next: "2d" | "3d") {
+    if (next === mode) return;
+    mode = next;
+    const is3d = next === "3d";
+    if (is3d && !view3d) view3d = createSprite3D(stage3d, panel3d, info, imgs, blendSel.value as Blend);
+    root.dataset.mode = next;
+    stage2d.hidden = is3d;
+    stage3d.hidden = !is3d;
+    panel3d.hidden = !is3d;
+    for (const b of modeBtns) {
+      const on = b.dataset.mode === next;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
+    view3d?.setActive(is3d);
+    draw();
+  }
+  for (const b of modeBtns) b.addEventListener("click", () => setMode(b.dataset.mode === "3d" ? "3d" : "2d"));
 
   rebuild();
   buildStrip();
@@ -268,5 +318,7 @@ export function mountSpritePlayer(host: HTMLElement, info: SpriteInfo, title: st
   return () => {
     disposed = true;
     if (raf) cancelAnimationFrame(raf);
+    view3d?.dispose();
+    view3d = null;
   };
 }

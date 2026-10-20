@@ -49,7 +49,7 @@ Na primeira execução, clique em **escolher pasta…** e aponte para a pasta co
   (`env_sprite`), sons ambientes, decals, névoa, sol, portas/plataformas/trens animados — ver o painel
   [Camadas](#vista-3d-painel-camadas-v07).
 - **Explorador** (nova seção): arquivos do mod (mod/valve/`.pak`) com visualizador por tipo; navegador de
-  **WAD** (grade de texturas, mips, PNG, quais mapas usam); player de **sprites** `.spr`; **áudio** com
+  **WAD** (grade de texturas, mips, PNG, quais mapas usam); player de **sprites** `.spr` (2D | 3D: billboard por tipo, blend, `renderamt`/`rendercolor`, esfera do raio e câmera do mundo girando sozinha; ver `prints/v8-sprite-3d.png`); **áudio** com
   forma de onda e loop; `.nav`, `.dem`, `liblist.gam`, `hud.txt`, `_detail.txt`, `mapcycle.txt`.
 - **`.mdl` completo**: bodygroups, bone controllers, blends, cores de time, chrome/aditivo/masked,
   hitboxes, attachments, eventos.
