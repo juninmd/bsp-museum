@@ -13,8 +13,9 @@ import {
 import { buildChunks, toWorld, visibleIndices, type Chunk } from "./lib/geometry.ts";
 import { inputFromMesh } from "./lib/chunker.ts";
 import { Pvs } from "./lib/pvs.ts";
-import { Overlays, rgb01, type OverlayKey, type PickInfo, type VolumeCategory } from "./viewer-overlays.ts";
+import { Overlays, rgb01, type OverlayKey, type PickInfo, type SoundVisual, type VolumeCategory } from "./viewer-overlays.ts";
 import type {
+  AmbientSound,
   BrushModelInfo,
   EnvFog,
   HullMesh,
@@ -50,12 +51,20 @@ export type LayerName =
   | "fog"
   | "sun"
   | "sky"
+  | "sound3d"
   | OverlayKey;
 
 export interface LayerStat {
   /** quantos itens a camada tem neste mapa (0 = a interface esconde o controle) */
   count: number;
   on: boolean;
+}
+
+/** Pose da câmera para o ouvinte do áudio espacial: coordenadas da cena (Y-up), direção unitária. */
+export interface ListenerPose {
+  pos: [number, number, number];
+  forward: [number, number, number];
+  up: [number, number, number];
 }
 
 export interface Viewer3D {
@@ -88,6 +97,12 @@ export interface Viewer3D {
   /** `.spr` que as entidades de sprite pedem */
   spriteModels(): string[];
   setSpriteInfo(model: string, info: SpriteInfo | null): void;
+  /** `ambient_generic` do mapa, na ordem que numera os sons da camada "Sons 3D" */
+  soundSources(): readonly AmbientSound[];
+  /** estado visual de cada som (índice = id), aplicado a cada quadro: pulso, alcance, destaque */
+  setSoundVisuals(visuals: readonly (SoundVisual | undefined)[]): void;
+  /** chamado a cada quadro com a pose da câmera (órbita ou primeira pessoa); `null` remove */
+  onFrame(listener: ((pose: ListenerPose, nowMs: number) => void) | null): void;
   dispose(): void;
 }
 
@@ -681,6 +696,7 @@ export function mount3D(
     lights: false,
     sprites: false,
     sounds: false,
+    sound3d: false,
     decals: false,
     routes: false,
     volumes: false,
@@ -916,7 +932,7 @@ export function mount3D(
     ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
     raycaster.setFromCamera(ndc, camera);
   };
-  const anyPickable = () => layerOn.lights || layerOn.sprites || layerOn.sounds || layerOn.decals || layerOn.volumes;
+  const anyPickable = () => layerOn.lights || layerOn.sprites || layerOn.sounds || layerOn.sound3d || layerOn.decals || layerOn.volumes;
   const onPointerMove = (ev: PointerEvent) => {
     if (mode === "fps" || ev.buttons !== 0) {
       if (!pinned) hideTip();
@@ -968,6 +984,10 @@ export function mount3D(
   let lastStats = 0;
 
   let raf = 0;
+  let soundVisuals: readonly (SoundVisual | undefined)[] = [];
+  let frameListener: ((pose: ListenerPose, nowMs: number) => void) | null = null;
+  const listenFwd = new THREE.Vector3();
+  const listenUp = new THREE.Vector3();
   const animate = () => {
     raf = requestAnimationFrame(animate);
     const dt = Math.min(clock.getDelta(), 0.1);
@@ -990,6 +1010,20 @@ export function mount3D(
       tickMovers();
     }
     overlays.update(animTime, styleDefs, layerOn.lightAnim, lightsOff);
+    if (layerOn.sound3d) overlays.updateSoundVisuals(soundVisuals, animTime);
+    if (frameListener) {
+      camera.updateMatrixWorld();
+      camera.getWorldDirection(listenFwd);
+      listenUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+      frameListener(
+        {
+          pos: [camera.position.x, camera.position.y, camera.position.z],
+          forward: [listenFwd.x, listenFwd.y, listenFwd.z],
+          up: [listenUp.x, listenUp.y, listenUp.z],
+        },
+        performance.now(),
+      );
+    }
     if (pointerDirty && pointer && !pinned && anyPickable()) {
       pointerDirty = false;
       const r = renderer.domElement.getBoundingClientRect();
@@ -1068,6 +1102,13 @@ export function mount3D(
         case "sky":
           sky.visible = on;
           break;
+        case "sound3d":
+          overlays.setSoundVisuals(on);
+          if (!on && !anyPickable()) {
+            hideTip();
+            pinned = false;
+          }
+          break;
         default:
           overlays.setVisible(name, on);
           if (!on && !anyPickable()) {
@@ -1090,6 +1131,7 @@ export function mount3D(
         lights: stat(overlays.counts.lights, "lights"),
         sprites: stat(overlays.counts.sprites, "sprites"),
         sounds: stat(overlays.counts.sounds, "sounds"),
+        sound3d: stat(overlays.ambientSources().length, "sound3d"),
         decals: stat(overlays.counts.decals, "decals"),
         routes: stat(overlays.counts.routes, "routes"),
         volumes: stat(overlays.counts.volumes, "volumes"),
@@ -1104,9 +1146,18 @@ export function mount3D(
     volumesTruncated: () => overlays.volumesWereTruncated,
     spriteModels: () => overlays.spriteModels(),
     setSpriteInfo: (model, info) => overlays.setSpriteInfo(model, info),
+    soundSources: () => overlays.ambientSources(),
+    setSoundVisuals(visuals) {
+      soundVisuals = visuals;
+    },
+    onFrame(listener) {
+      frameListener = listener;
+    },
 
     dispose() {
       cancelAnimationFrame(raf);
+      frameListener = null;
+      soundVisuals = [];
       ro.disconnect();
       document.removeEventListener("pointerlockchange", onPointerLockChange);
       document.removeEventListener("mousemove", onMouseMove);

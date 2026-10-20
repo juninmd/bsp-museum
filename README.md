@@ -64,6 +64,27 @@ cargo build --release --no-default-features --bin bsp-museum-mcp   # sem GTK/Web
 claude mcp add bsp-museum -- ./target/release/bsp-museum-mcp serve --root /caminho/cstrike
 ```
 
+### Skins, sprites e sons em 3D
+
+| skins (galeria 3D, comparar, equipes) | sprites (billboard por tipo) | sons espaciais no mapa |
+|---|---|---|
+| ![skins em 3D](prints/v8-skins-3d.png) | ![sprite em 3D](prints/v8-sprite-3d-aditivo.png) | ![sons 3D](prints/v8-sons-3d.png) |
+
+- **Skins** (aba Recursos): uma miniatura 3D girando por família de skin (um só contexto WebGL compartilhado),
+  comparação lado a lado ou com divisor arrastável, prévia das equipes (top/bottom) e **mapa UV** com a malha
+  sobre a textura, destaque do triângulo no modelo (e o caminho inverso) e exportação PNG.
+- **Sprites** (Explorador → Sprites, alternador 2D | 3D): os cinco tipos de `.spr` (`parallel`, `parallel_upright`,
+  `facing_upright`, `oriented`, `parallel_oriented`) comportam-se como billboards de verdade numa cena orbitável, com
+  blend por `tex_format`, origem do frame, esfera do raio, `renderamt`/`rendercolor` e câmera do jogo girando sozinha.
+- **Sons 3D** (camada **Sons 3D** na vista do mapa): cada `ambient_generic` vira uma fonte Web Audio com panner HRTF e
+  atenuação linear pelo raio; o ouvinte acompanha a câmera (órbita e no-clip). O painel "Sons do mapa" lista distância,
+  volume efetivo e medidor de nível, com mudo/solo/"ouvir" por som; arquivo ausente ou ADPCM aparecem marcados como
+  indisponíveis. O áudio só começa após o botão "Ativar áudio" (política de autoplay). Os WAVs sem laço repetem por
+  padrão (opção desligável); no jogo tocariam uma vez.
+
+> Ainda não ouvido em máquina real: o Chromium de teste não tem saída de som, então a espacialização foi conferida
+> pelo grafo Web Audio e pelos medidores, não de ouvido. As regras de orientação dos sprites vêm do Xash3D de memória.
+
 ## Novidades da v0.6
 
 > Capturas geradas pelo próprio app a partir de um mapa **sintético** (montado byte a byte nos

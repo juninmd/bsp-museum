@@ -6,6 +6,7 @@ import type { SpriteInfo } from "../types/formats.ts";
 import type { MapDetail } from "../types.ts";
 import type { LayerName, Viewer3D } from "../viewer3d.ts";
 import { zoneLabel } from "../viewer-overlays.ts";
+import { createSoundPanel, type SoundPanel } from "./sound-panel.ts";
 
 /**
  * Painel "Camadas" da vista 3D: liga e desliga as animações de superfície, os hulls de
@@ -48,7 +49,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
 }
 
 /** camadas de marcadores: mostram a quantidade mesmo quando é 1 */
-const COUNTED = new Set<LayerName>(["lights", "sprites", "sounds", "decals", "routes"]);
+const COUNTED = new Set<LayerName>(["lights", "sprites", "sounds", "sound3d", "decals", "routes"]);
 
 export function createLayersPanel(opts: Options): LayersPanel {
   const { holder, viewer, detail, textured } = opts;
@@ -279,10 +280,19 @@ export function createLayersPanel(opts: Options): LayersPanel {
   spriteRow?.querySelector("input")?.addEventListener("change", (ev) => {
     if ((ev.target as HTMLInputElement).checked) void loadSprites();
   });
+  // "Sons 3D": o painel (e o motor de áudio) só nascem na primeira vez que a camada liga
+  let soundPanel: SoundPanel | null = null;
+  const soundRow = layerRow("sound3d", t("vw.l.sound3d"), t("vw.l.sound3dHint"));
+  soundRow?.querySelector("input")?.addEventListener("change", (ev) => {
+    const on = (ev.target as HTMLInputElement).checked;
+    if (on && !soundPanel && !dead) soundPanel = createSoundPanel({ holder, viewer, modDir: modDirOf(path) });
+    soundPanel?.setOpen(on);
+  });
   const scene = section(t("vw.sec.scene"), [
     layerRow("lights", t("vw.l.lights"), t("vw.l.lightsHint")),
     spriteRow,
     layerRow("sounds", t("vw.l.sounds"), t("vw.l.soundsHint")),
+    soundRow,
     layerRow("decals", t("vw.l.decals")),
     layerRow("routes", t("vw.l.routes")),
     layerRow("movers", t("vw.l.movers")),
@@ -306,6 +316,8 @@ export function createLayersPanel(opts: Options): LayersPanel {
     dispose() {
       dead = true;
       for (const st of hullState.values()) st.pager?.cancel();
+      soundPanel?.dispose();
+      soundPanel = null;
     },
   };
 }
