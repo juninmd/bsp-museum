@@ -1664,3 +1664,274 @@ textarea {
 .v3-tip[hidden] {
   display: none;
 }
+
+/* ---- painel "Sons do mapa" (camada "Sons 3D") ---- */
+.snd-panel {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  bottom: 1.9rem;
+  z-index: 3;
+  width: min(300px, calc(100% - 1rem - 190px));
+  min-width: 230px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bar);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.76rem;
+  color: var(--text);
+  backdrop-filter: blur(6px);
+  overflow: hidden;
+}
+
+.snd-panel[hidden],
+.snd-body[hidden],
+.snd-enable[hidden],
+.snd-controls[hidden],
+.snd-meter[hidden] {
+  display: none;
+}
+
+.snd-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.3rem 0.5rem 0.3rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.snd-fold {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  width: 1.4rem;
+  height: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.snd-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.4rem 0.5rem;
+  min-height: 0;
+  flex: 1;
+}
+
+.snd-enable {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.snd-enable-btn {
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.snd-enable-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.snd-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.snd-row-master,
+.snd-sumrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.snd-master {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.snd-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.snd-panel .chk {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+}
+
+.snd-panel .chk input {
+  accent-color: var(--accent);
+}
+
+.snd-sort {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.snd-sort select {
+  font-size: 0.7rem;
+  max-width: 6.2rem;
+}
+
+.snd-summary {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.snd-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.snd-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 0.4rem;
+  row-gap: 0.05rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  flex: none;
+}
+
+.snd-row.is-playing {
+  border-color: var(--accent);
+}
+
+.snd-row.is-selected {
+  outline: 1px solid var(--warm);
+}
+
+.snd-row.is-unavailable {
+  opacity: 0.6;
+}
+
+.snd-main {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.snd-dot {
+  flex: none;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+}
+
+.snd-name {
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snd-name:hover {
+  text-decoration: underline;
+}
+
+.snd-tags,
+.snd-meta {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.55rem;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.snd-loop {
+  color: var(--warm);
+}
+
+.snd-meter {
+  grid-column: 1 / -1;
+  height: 4px;
+  margin-top: 0.15rem;
+  border-radius: 2px;
+  background: var(--well);
+  overflow: hidden;
+}
+
+.snd-meter-fill {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--ok), var(--warm) 70%, var(--crit));
+}
+
+.snd-btns {
+  display: flex;
+  gap: 0.2rem;
+}
+
+.snd-btn {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.66rem;
+  line-height: 1.2;
+  padding: 0.08rem 0.35rem;
+  cursor: pointer;
+}
+
+.snd-btn[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.snd-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.snd-note {
+  margin: 0.2rem 0 0;
+  flex: none;
+}
+
+@media (max-width: 640px) {
+  .snd-panel {
+    width: calc(100% - 1rem);
+    bottom: auto;
+    max-height: 55%;
+  }
+}

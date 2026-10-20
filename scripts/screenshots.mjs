@@ -106,8 +106,72 @@ const mock = `
       frames: [{ kind: "single", durations: [], images: [{ origin_x: -32, origin_y: 32, width: 64, height: 64, png: c.toDataURL("image/png") }] }],
     };
   };
+  // ---- áudio sintético (v8, "Sons 3D"): WAV PCM 16 bits gerado na hora; nada vem do disco
+  const wavData = (freq, secs, rate = 22050, amp = 0.5, shape = "sine") => {
+    const n = Math.floor(rate * secs);
+    const buf = new ArrayBuffer(44 + n * 2);
+    const v = new DataView(buf);
+    const w = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+    w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVE"); w(12, "fmt ");
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    w(36, "data"); v.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) {
+      const ph = (i / rate) * freq;
+      let x = Math.sin(2 * Math.PI * ph);
+      if (shape === "saw") x = 2 * (ph % 1) - 1;
+      if (shape === "pulse") x = Math.exp(-((i / rate) % 0.5) * 12) * x;
+      v.setInt16(44 + i * 2, Math.round(x * amp * 32767), true);
+    }
+    let bin = "";
+    const u8 = new Uint8Array(buf);
+    for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+    return { url: "data:audio/wav;base64," + btoa(bin), n, rate };
+  };
+  const SOUNDS = {
+    "sound/ambience/hum.wav": { freq: 110, secs: 2, shape: "saw", amp: 0.25, loop: { start_sample: 4410, end_sample: null, source: "cue" } },
+    "sound/ambience/wind.wav": { freq: 220, secs: 3, amp: 0.4, loop: { start_sample: 0, end_sample: null, source: "smpl" } },
+    "sound/ambience/drip.wav": { freq: 1320, secs: 1, shape: "pulse", amp: 0.6 },
+    "sound/ambience/beep.wav": { freq: 880, secs: 0.6, shape: "pulse", amp: 0.5 },
+    "sound/ambience/alarm.wav": { freq: 520, secs: 1, amp: 0.5 },
+    "sound/ambience/stereo.wav": { freq: 330, secs: 2, shape: "saw", amp: 0.2 },
+  };
+  const audioInfo = (name) => {
+    if (name === "sound/ambience/adpcm.wav") {
+      return { type: "audio", container: "wav", codec: "ms-adpcm", format_tag: 2, channels: 1, sample_rate: 22050, bits_per_sample: 4, block_align: 256, bitrate_kbps: null, sample_frames: 22050, duration_secs: 1, duration_approx: false, size_bytes: 12000, playable: false, cue_points: [], loops: [], tags: [], peak: null, envelope: null, warnings: [] };
+    }
+    const d = SOUNDS[name];
+    if (!d) return null;
+    return { type: "audio", container: "wav", codec: "pcm", format_tag: 1, channels: 1, sample_rate: 22050, bits_per_sample: 16, block_align: 2, bitrate_kbps: null, sample_frames: Math.floor(22050 * d.secs), duration_secs: d.secs, duration_approx: false, size_bytes: 44 + Math.floor(22050 * d.secs) * 2, playable: true, cue_points: [], loops: d.loop ? [d.loop] : [], tags: [], peak: d.amp, envelope: null, warnings: [] };
+  };
+  // ambient_generic extras no mapa sintético: raios pequeno/médio/grande, "em todo o mapa", arquivo ausente, ADPCM...
+  if (X) {
+    const amb = (origin, sound, o = {}) => ({
+      type: "ambient", entity: 100 + X.mesh.scene.entities.length, classname: "ambient_generic", targetname: null,
+      origin, sound, volume: 0.8, radius: 800, spawnflags: 4, start_silent: false, ...o,
+    });
+    X.mesh.scene.entities.push(
+      amb([-120, 80, 40], "ambience/wind.wav", { radius: 1250, spawnflags: 8, volume: 1 }),
+      amb([300, 150, 60], "ambience/drip.wav", { radius: 500, spawnflags: 2 }),
+      amb([450, -120, 20], "ambience/stereo.wav", { radius: 800 }),
+      amb([0, 0, 0], "ambience/beep.wav", { radius: null, spawnflags: 1, volume: 0.3 }),
+      amb([-200, -150, 80], "ambience/missing.wav", { radius: 800 }),
+      amb([200, -200, 100], "ambience/adpcm.wav", { radius: 800 }),
+      amb([50, 200, 150], "ambience/alarm.wav", { radius: 500, spawnflags: 18, start_silent: true }),
+      amb([-60, -60, 200], "!HG_ALERT", { radius: 800 }),
+    );
+    X.mesh.scene.counts.ambient = (X.mesh.scene.counts.ambient ?? 0) + 8;
+  }
   const radarFor = (p) => D.radar[nameOf(p)] ?? D.radar.de_museu;
   window.__calls = [];
+  // rastreia os AudioContext criados para conferir que fechar a vista libera todos
+  window.__acs = [];
+  if (window.AudioContext) {
+    const RealAC = window.AudioContext;
+    window.AudioContext = class extends RealAC {
+      constructor(...args) { super(...args); window.__acs.push(this); }
+    };
+  }
   const mdlModel = (a) => (a.top != null || a.bottom != null ? D.mdl["model-team"] : (a.body ?? 0) >= 1 ? D.mdl["model-body1"] : D.mdl["model-body0"]);
   const mdlSeq = (a) => {
     const f = a.index === 1 ? D.mdl.idle : (a.blend?.[0] ?? 0) >= 128 ? D.mdl["walk-255"] : D.mdl["walk-0"];
@@ -125,6 +189,19 @@ const mock = `
         case "map_hulls": return X.hulls[a.hull] ?? X.hulls[1];
         case "map_volumes": return X.volumes;
         case "load_sprite": return glowSprite();
+        case "analyze_mod_file": {
+          window.__calls.push(["analyze_mod_file", a.rel]);
+          const info = audioInfo(a.rel);
+          if (!info) throw "arquivo não encontrado: " + a.rel;
+          return { name: a.rel, analysis: info };
+        }
+        case "read_mod_audio": {
+          window.__calls.push(["read_mod_audio", a.rel]);
+          const d = SOUNDS[a.rel];
+          if (!d) throw "arquivo não encontrado: " + a.rel;
+          const w = wavData(d.freq, d.secs, 22050, d.amp, d.shape);
+          return { mime: "audio/wav", size_bytes: 44 + w.n * 2, data_url: w.url };
+        }
         case "map_mesh": return meshFor(a.path);
         case "map_entities": return entFor(a.path);
         case "map_radar": return radarFor(a.path);
@@ -336,6 +413,114 @@ if (extras) {
   await page.click(".layers-btn");
   await pause(600);
   await shot("v7-3d-luz-estatica.png", viewer);
+
+
+  // ---- v0.8: camada "Sons 3D" (áudio espacial). O áudio é sintético e o Chromium não tem placa de
+  //      som: o que dá para conferir é o grafo Web Audio (estado do contexto, vozes, medidores).
+  const checks = [];
+  const check = (name, ok, extra = "") => { checks.push(ok); console.log(ok ? "  ok  " : " FALHA", name, extra); };
+  await goTo("info_player_start"); // (o painel de camadas está fechado desde a captura anterior)
+  await page.click(".layers-btn");
+  await openSection("Volumes");
+  await layer("Mostrar volumes").uncheck(); // cena limpa: só os sons
+  await openSection("Colisão");
+  await page.locator(".hull-btn").first().click();
+  await openSection("Cena");
+  await layer("Luzes").uncheck();
+  await layer("Sprites e glows").uncheck();
+  await layer("Decalques").uncheck();
+  await layer("Sons ambientes").uncheck();
+  await layer("Sons 3D").check();
+  await page.click(".layers-btn");
+  await page.waitForSelector(".snd-panel:not([hidden])");
+  check("painel abre com 9 sons", (await page.locator(".snd-row").count()) === 9, String(await page.locator(".snd-row").count()));
+  check("antes do gesto não há AudioContext", (await page.evaluate(() => window.__acs.length)) === 0);
+  await page.click(".snd-enable-btn"); // o clique é o gesto do usuário
+  await page.waitForSelector(".snd-controls:not([hidden])");
+  await page.waitForFunction(() => document.querySelectorAll('.snd-row[data-status="playing"]').length >= 2, null, { timeout: 15000 });
+  await pause(1200);
+  const ctxState = await page.evaluate(() => window.__acs.map((c) => c.state));
+  check("um AudioContext em execução", ctxState.length === 1 && ctxState[0] === "running", ctxState.join());
+  const playing = await page.locator('.snd-row[data-status="playing"]').count();
+  check("sons no alcance tocando", playing >= 2, String(playing));
+  const unav = await page.locator(".snd-row.is-unavailable").allTextContents();
+  check("ausente, ADPCM, sentença e vazio marcados como indisponíveis", unav.length >= 3, unav.map((x) => x.replace(/\s+/g, " ").slice(0, 90)).join(" | "));
+  check("ADPCM diz o codec", unav.some((x) => /ms-adpcm/.test(x)));
+  check("arquivo ausente diz o motivo", unav.some((x) => /não encontrado/.test(x)));
+  check("inicia-silencioso não toca sozinho", (await page.locator('.snd-row[data-status="playing"]', { hasText: "alarm.wav" }).count()) === 0);
+  const maxFill = await page.evaluate(() => Math.max(0, ...[...document.querySelectorAll(".snd-row.is-playing .snd-meter")].map((m) => Number(m.getAttribute("aria-valuenow")))));
+  check("medidor de nível mexe (analisador recebendo sinal)", maxFill > 0, "máx " + maxFill + "%");
+  const vols = await page.locator(".snd-row.is-playing .snd-vol").allTextContents();
+  console.log("  volumes efetivos:", vols.join(", "));
+  // afasta a câmera para os alcances (esferas coloridas) aparecerem inteiros
+  const box = await viewer.boundingBox();
+  await page.mouse.move(box.x + box.width * 0.62, box.y + box.height / 2);
+  for (let i = 0; i < 4; i++) { await page.mouse.wheel(0, 400); await pause(150); }
+  await pause(1500);
+  await shot("v8-sons-3d.png", viewer);
+
+  // carrega sob demanda e usa o cache: cada arquivo é lido uma vez
+  const reads = await page.evaluate(() => window.__calls.filter((c) => c[0] === "read_mod_audio").map((c) => c[1]));
+  check("cada arquivo lido uma vez só", new Set(reads).size === reads.length, reads.join(", "));
+
+  // (o SwiftShader desenha poucos quadros por segundo: espera-se a condição em vez de um tempo fixo)
+  const until = async (cond, ms = 8000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      if (await cond()) return true;
+      await pause(150);
+    }
+    return false;
+  };
+  const nPlaying = () => page.locator('.snd-row[data-status="playing"]').count();
+  const statusOf = (row) => row.getAttribute("data-status");
+
+  // mudo por som: a linha para de tocar
+  const hum = page.locator(".snd-row", { hasText: "hum.wav" });
+  await hum.locator(".snd-btn").nth(0).click();
+  check("mudo por som interrompe", await until(async () => (await statusOf(hum)) !== "playing"));
+  await hum.locator(".snd-btn").nth(0).click();
+  check("tirar o mudo volta a tocar", await until(async () => (await statusOf(hum)) === "playing"));
+  // solo: só o som em solo toca
+  const wind = page.locator(".snd-row", { hasText: "wind.wav" });
+  await wind.locator(".snd-btn").nth(1).click();
+  check("solo deixa um som só", await until(async () => (await nPlaying()) === 1));
+  await wind.locator(".snd-btn").nth(1).click();
+  check("tirar o solo devolve os outros", await until(async () => (await nPlaying()) >= 3));
+  // ouvir isolado de um som fora do alcance (drip: alcance 500 u)
+  const drip = page.locator(".snd-row", { hasText: "drip.wav" });
+  await drip.locator(".snd-listen").click();
+  check("ouvir isolado toca só esse som", await until(async () => (await statusOf(drip)) === "playing" && (await nPlaying()) === 1));
+  await drip.locator(".snd-listen").click();
+  // mudo global
+  const muteAll = page.locator(".snd-controls .chk", { hasText: "Mudo" }).locator("input");
+  await muteAll.check();
+  check("mudo global cala tudo", await until(async () => (await nPlaying()) === 0));
+  await muteAll.uncheck();
+  check("sair do mudo global volta a tocar", await until(async () => (await nPlaying()) >= 3));
+
+  // clicar no nome leva a câmera ao emissor: a distância dele cai
+  const num = (x) => Number(String(x).replace(/\D/g, ""));
+  const beforeDist = await wind.locator(".snd-dist").textContent();
+  await wind.locator(".snd-name").click();
+  check("ir até o emissor aproxima a câmera", await until(async () => num(await wind.locator(".snd-dist").textContent()) < num(beforeDist) - 50), `${beforeDist} -> ${await wind.locator(".snd-dist").textContent()}`);
+  await pause(800);
+  await shot("v8-sons-3d-emissor.png", viewer);
+
+  // desliga a camada: o contexto fica pausado; troca de aba (fecha o viewer): tudo é liberado
+  await page.click(".layers-btn");
+  await layer("Sons 3D").uncheck();
+  check("camada desligada pausa o contexto", await until(async () => (await page.evaluate(() => window.__acs.map((c) => c.state).join())) === "suspended"));
+  await layer("Sons 3D").check();
+  check("religar retoma", await until(async () => (await page.evaluate(() => window.__acs[0].state)) === "running"));
+  await page.click('[data-view="plan"]');
+  check("fechar a vista fecha o AudioContext", await until(async () => (await page.evaluate(() => window.__acs.map((c) => c.state).join())) === "closed"));
+  check("o painel saiu do DOM", (await page.locator(".snd-panel").count()) === 0);
+  await page.click('[data-view="tex"]');
+  await page.waitForSelector("#viewer3d canvas");
+  await pause(800);
+  console.log(checks.every(Boolean) ? "SONS 3D: todas as verificações passaram" : "SONS 3D: HÁ FALHAS (" + checks.filter((x) => !x).length + ")");
+  if (!checks.every(Boolean)) process.exitCode = 1;
 
   // SMOKE=1: liga as camadas de movimento/névoa/sol e troca de modo só para ver se o console fica limpo
   if (process.env.SMOKE) {
