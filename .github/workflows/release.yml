@@ -49,3 +49,31 @@ jobs:
           releaseName: "bsp-museum ${{ github.ref_name }}"
           releaseDraft: true
           args: ${{ matrix.args }}
+
+  mcp:
+    name: Servidor MCP (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: Windows, os: windows-latest, ext: ".exe", asset: windows-x64 }
+          - { label: Linux, os: ubuntu-22.04, ext: "", asset: linux-x64 }
+          - { label: macOS (Apple Silicon), os: macos-latest, ext: "", asset: macos-arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Compila (sem interface gráfica)
+        working-directory: src-tauri
+        run: cargo build --release --no-default-features --bin bsp-museum-mcp
+      - name: Anexa ao release (rascunho)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp "src-tauri/target/release/bsp-museum-mcp${{ matrix.ext }}" "bsp-museum-mcp-${{ matrix.asset }}${{ matrix.ext }}"
+          gh release upload "${{ github.ref_name }}" "bsp-museum-mcp-${{ matrix.asset }}${{ matrix.ext }}" --clobber || echo "release ainda não existe; artefato não anexado"

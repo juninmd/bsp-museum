@@ -47,3 +47,21 @@ jobs:
       - name: Testes
         working-directory: src-tauri
         run: cargo test
+
+  core:
+    name: Núcleo + MCP (sem GTK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --no-default-features --all-targets -- -D warnings
+      - name: Testes
+        working-directory: src-tauri
+        run: cargo test --no-default-features
