@@ -1,0 +1,80 @@
+// Textos da visualização de skins do `.mdl` (aba Recursos): [pt, en].
+// Entra em `DICT` por `...DICT_SKINS` (dict.ts), então vale o mesmo teste de paridade pt/en.
+export const DICT_SKINS: Record<string, [string, string]> = {
+  "skins.title": ["skins", "skins"],
+  "skins.gallery": ["famílias de skin", "skin families"],
+  "skins.tile.hint": [
+    "clique: aplica a skin · Shift+clique: define o lado B da comparação",
+    "click: apply the skin · Shift+click: set side B of the comparison",
+  ],
+  "skins.tile.base": ["original", "original"],
+  "skins.tile.changed": ["{0} textura(s) trocada(s)", "{0} texture(s) swapped"],
+
+  "skins.cmp.title": ["comparar", "compare"],
+  "skins.cmp.hint": [
+    "mostra duas skins na mesma cena, com a câmera sincronizada",
+    "shows two skins in the same scene with a synchronized camera",
+  ],
+  "skins.cmp.side": ["lado a lado", "side by side"],
+  "skins.cmp.split": ["antes/depois (divisor)", "before/after (divider)"],
+  "skins.cmp.modeHint": ["como mostrar os dois lados", "how to show the two sides"],
+  "skins.cmp.swap": ["trocar A e B", "swap A and B"],
+  "skins.cmp.failed": ["não foi possível carregar a comparação", "could not load the comparison"],
+
+  "skins.teams": ["equipes", "teams"],
+  "skins.teamsHint": [
+    "prévia lado a lado do modelo com as cores de time azul e vermelha (texturas de remap)",
+    "side-by-side preview of the model in the blue and red team colors (remap textures)",
+  ],
+  "skins.team.model": ["cores atuais", "current colors"],
+  "skins.team.blue": ["azul", "blue"],
+  "skins.team.red": ["vermelho", "red"],
+  "skins.team.hint": [
+    "cores de time (cima/baixo, matiz 0..255) aplicadas às texturas de remap deste lado",
+    "team colors (top/bottom, 0..255 hue) applied to this side's remap textures",
+  ],
+
+  "skins.uv.title": ["mapa UV", "UV map"],
+  "skins.uv.titleHint": [
+    "textura com a malha UV por cima, zoom, alpha e exportação",
+    "texture with the UV mesh on top, zoom, alpha and export",
+  ],
+  "skins.uv.tris": ["{0} triângulos", "{0} triangles"],
+  "skins.uv.unused": ["sem uso nesta skin", "unused in this skin"],
+  "skins.uv.wire": ["malha UV", "UV mesh"],
+  "skins.uv.checker": ["xadrez", "checker"],
+  "skins.uv.alpha": ["alpha", "alpha"],
+  "skins.uv.alphaHint": ["mostra só o canal alpha, em cinza", "shows only the alpha channel, in gray"],
+  "skins.uv.zoomIn": ["aproximar", "zoom in"],
+  "skins.uv.zoomOut": ["afastar", "zoom out"],
+  "skins.uv.fit": ["ajustar", "fit"],
+  "skins.uv.fitHint": ["enquadra a textura inteira (ou duplo clique)", "fit the whole texture (or double-click)"],
+  "skins.uv.export": ["exportar PNG", "export PNG"],
+  "skins.uv.exportHint": ["baixa a textura como PNG", "download the texture as PNG"],
+  "skins.uv.pick": ["escolha uma textura na lista", "pick a texture from the list"],
+  "skins.uv.none": ["este modelo não tem texturas", "this model has no textures"],
+  "skins.uv.hint": [
+    "roda: zoom · arrastar: mover · passar o mouse realça o triângulo no modelo",
+    "wheel: zoom · drag: pan · hovering highlights the triangle on the model",
+  ],
+
+  "skins.flag.chrome": ["chrome", "chrome"],
+  "skins.flag.additive": ["aditivo", "additive"],
+  "skins.flag.masked": ["masked", "masked"],
+  "skins.flag.fullbright": ["fullbright", "fullbright"],
+  "skins.flag.flatshade": ["flatshade", "flatshade"],
+  "skins.flag.nomips": ["sem mipmap", "no mipmaps"],
+  "skins.flag.alpha": ["alpha", "alpha"],
+  "skins.flag.remap": ["remap", "remap"],
+  "skins.flagHint.chrome": ["reflexo: a textura é um espelho esférico", "reflection: the texture is a spherical mirror"],
+  "skins.flagHint.additive": ["soma a cor à cena (brilhos)", "adds its color to the scene (glows)"],
+  "skins.flagHint.masked": ["o índice 255 da paleta é transparente", "palette index 255 is transparent"],
+  "skins.flagHint.fullbright": ["sem iluminação", "unlit"],
+  "skins.flagHint.flatshade": ["sombreamento faceado", "flat shading"],
+  "skins.flagHint.nomips": ["sem mipmaps", "no mipmaps"],
+  "skins.flagHint.alpha": ["textura com canal alpha", "texture with an alpha channel"],
+  "skins.flagHint.remap": [
+    "textura de cor de time: as faixas de cima e de baixo mudam com top/bottom",
+    "team color texture: the top and bottom ranges change with top/bottom",
+  ],
+};

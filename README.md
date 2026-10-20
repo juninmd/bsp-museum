@@ -49,7 +49,7 @@ Na primeira execução, clique em **escolher pasta…** e aponte para a pasta co
   (`env_sprite`), sons ambientes, decals, névoa, sol, portas/plataformas/trens animados — ver o painel
   [Camadas](#vista-3d-painel-camadas-v07).
 - **Explorador** (nova seção): arquivos do mod (mod/valve/`.pak`) com visualizador por tipo; navegador de
-  **WAD** (grade de texturas, mips, PNG, quais mapas usam); player de **sprites** `.spr`; **áudio** com
+  **WAD** (grade de texturas, mips, PNG, quais mapas usam); player de **sprites** `.spr` (2D | 3D: billboard por tipo, blend, `renderamt`/`rendercolor`, esfera do raio e câmera do mundo girando sozinha; ver `prints/v8-sprite-3d.png`); **áudio** com
   forma de onda e loop; `.nav`, `.dem`, `liblist.gam`, `hud.txt`, `_detail.txt`, `mapcycle.txt`.
 - **`.mdl` completo**: bodygroups, bone controllers, blends, cores de time, chrome/aditivo/masked,
   hitboxes, attachments, eventos.
@@ -63,6 +63,27 @@ cd src-tauri
 cargo build --release --no-default-features --bin bsp-museum-mcp   # sem GTK/WebKit
 claude mcp add bsp-museum -- ./target/release/bsp-museum-mcp serve --root /caminho/cstrike
 ```
+
+### Skins, sprites e sons em 3D
+
+| skins (galeria 3D, comparar, equipes) | sprites (billboard por tipo) | sons espaciais no mapa |
+|---|---|---|
+| ![skins em 3D](prints/v8-skins-3d.png) | ![sprite em 3D](prints/v8-sprite-3d-aditivo.png) | ![sons 3D](prints/v8-sons-3d.png) |
+
+- **Skins** (aba Recursos): uma miniatura 3D girando por família de skin (um só contexto WebGL compartilhado),
+  comparação lado a lado ou com divisor arrastável, prévia das equipes (top/bottom) e **mapa UV** com a malha
+  sobre a textura, destaque do triângulo no modelo (e o caminho inverso) e exportação PNG.
+- **Sprites** (Explorador → Sprites, alternador 2D | 3D): os cinco tipos de `.spr` (`parallel`, `parallel_upright`,
+  `facing_upright`, `oriented`, `parallel_oriented`) comportam-se como billboards de verdade numa cena orbitável, com
+  blend por `tex_format`, origem do frame, esfera do raio, `renderamt`/`rendercolor` e câmera do jogo girando sozinha.
+- **Sons 3D** (camada **Sons 3D** na vista do mapa): cada `ambient_generic` vira uma fonte Web Audio com panner HRTF e
+  atenuação linear pelo raio; o ouvinte acompanha a câmera (órbita e no-clip). O painel "Sons do mapa" lista distância,
+  volume efetivo e medidor de nível, com mudo/solo/"ouvir" por som; arquivo ausente ou ADPCM aparecem marcados como
+  indisponíveis. O áudio só começa após o botão "Ativar áudio" (política de autoplay). Os WAVs sem laço repetem por
+  padrão (opção desligável); no jogo tocariam uma vez.
+
+> Ainda não ouvido em máquina real: o Chromium de teste não tem saída de som, então a espacialização foi conferida
+> pelo grafo Web Audio e pelos medidores, não de ouvido. As regras de orientação dos sprites vêm do Xash3D de memória.
 
 ## Novidades da v0.6
 
@@ -245,8 +266,13 @@ src/                frontend (Vite + TS puro)
   ui/               detalhe, comparação, auditoria, modal
   lib/mdl-controls.ts  slider -> byte, cache de quadros, plano de material, caixas por quadro do .mdl (puro)
   lib/dict-model.ts    textos do painel do .mdl (entra em `DICT`)
+  lib/skins.ts      família de skin -> textura, projeção UV <-> pixel, hit-test de triângulo UV (puro)
+  lib/dict-skins.ts textos da visualização de skins (entra em `DICT`)
   resources.ts      aba Recursos: barra de animação e painel de controles do .mdl
-  model-viewer.ts   cena própria do .mdl (skinning na CPU, materiais, overlays)
+  model-viewer.ts   cena própria do .mdl (materiais, overlays, comparação de skins, seleção por clique)
+  mdl-rig.ts        geometria do .mdl montada uma vez e reaproveitada por todas as skins (um "look" = jogo de materiais)
+  skin-studio.ts    um único WebGLRenderer compartilhado que desenha as miniaturas 3D das skins
+  ui/skins.ts       faixa de skins: galeria 3D, comparar, equipes; ui/uvmap.ts: mapa UV
 ```
 
 Duas decisões que valem explicação:
@@ -336,6 +362,20 @@ no máximo 48 entradas por modelo aberto. Materiais por textura (`texture_info`)
 escrita de profundidade, *máscara* = `alphaTest`, *flatshade* = normal da face (o resto usa normais suavizadas por
 vértice com corte de aresta a 60°, já que o `.mdl` não é lido com as normais próprias). Partes puras (slider -> byte,
 chave de cache, plano de material, interpolação das caixas) em `src/lib/mdl-controls.ts`, com testes.
+
+**Skins em 3D (faixa abaixo do visualizador).** *Galeria*: uma miniatura 3D girando por família de skin; um único
+`WebGLRenderer` compartilhado (`skin-studio.ts`) desenha cada uma e copia o quadro para um canvas 2D, então o número de
+famílias não cria contextos WebGL (são dois no total: visualizador + miniaturas). A geometria é montada uma vez por modelo
+(`mdl-rig.ts`) e cada skin é só outro jogo de materiais sobre os mesmos buffers: como o `skin_families` do `MdlSummary`
+já diz qual textura substitui qual, trocar de skin não chama `load_model(.., skin = i)` de novo (daria o mesmo `texindex`
+trocado, mas reenviando todos os PNGs). Clicar aplica a skin; Shift+clique define o lado B da comparação.
+*Comparar*: duas skins na mesma cena com a mesma câmera — lado a lado (dois quadros do mesmo canvas, camadas do Three.js) ou
+antes/depois com divisor arrastável. *Equipes* (só se há textura de remap): o mesmo modelo com as cores de time azul
+(140/140) e vermelha (0/0) lado a lado, via `load_model(.., top, bottom)` com cache; são cores de prévia do matiz do
+Half-Life, não uma regra do CS (os jogadores do CS trocam de modelo por time em vez de remapear a cor). *Mapa UV*: a
+textura escolhida com a malha UV por cima (zoom na roda, pan arrastando, xadrez, canal alpha, exportar PNG), lista com
+tamanho e flags de cada textura; passar o mouse num triângulo o realça no mapa e no modelo, e clicar no modelo seleciona
+a textura dele. Partes puras (tabela de skin, projeção UV, acerto de triângulo) em `src/lib/skins.ts`, com testes.
 
 ## Testes
 

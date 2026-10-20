@@ -1,11 +1,14 @@
 import { DICT_MODEL } from "./dict-model.ts";
 import { DICT_EXPLORER } from "./dict-explorer.ts";
+import { DICT_SOUND3D } from "./dict-sound3d.ts";
 
 /**
  * Textos da interface: `[português, inglês]`. `{0}`, `{1}`… são argumentos de `t()`.
  * Uma fonte só para os dois idiomas — chave sem par não passa no teste de paridade.
  */
 import { DICT_VIEWER } from "./dict-viewer.ts";
+import { DICT_SPRITE3D } from "./dict-sprite3d.ts";
+import { DICT_SKINS } from "./dict-skins.ts";
 
 export const DICT: Record<string, [string, string]> = {
   locale: ["pt-BR", "en-US"],
@@ -274,4 +277,9 @@ export const DICT: Record<string, [string, string]> = {
   ...DICT_EXPLORER,
 
   ...DICT_VIEWER,
+
+  ...DICT_SPRITE3D,
+  ...DICT_SKINS,
+  // camada "Sons 3D" (áudio espacial) e painel "Sons do mapa"
+  ...DICT_SOUND3D,
 };

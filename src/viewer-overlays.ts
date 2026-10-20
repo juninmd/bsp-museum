@@ -3,6 +3,7 @@ import { t } from "./i18n.ts";
 import { styleValueAt } from "./lib/anim.ts";
 import { toWorld } from "./lib/geometry.ts";
 import { hullPositionsToWorld } from "./lib/hulls.ts";
+import { soundHue } from "./lib/spatial-audio.ts";
 import type { AmbientSound, Decal, HullMesh, LightSource, SpriteEnt, VolumeReport } from "./types/bsp-extra.ts";
 import type { SpriteInfo } from "./types/formats.ts";
 import type { MeshDetail } from "./types.ts";
@@ -42,6 +43,33 @@ export const MAX_LIGHTS = 4000;
 export const MAX_MARKERS = 1500;
 export const MAX_SPRITE_INSTANCES = 600;
 export const MAX_VOLUME_TRIANGLES = 200_000;
+/** sons ambientes que a camada "Sons 3D" aceita (esfera + ícone + anel cada) */
+export const MAX_SOUND3D = 300;
+
+/** Como um som aparece na camada "Sons 3D" a cada quadro. */
+export interface SoundVisual {
+  /** tocando agora (o anel pulsa) */
+  playing: boolean;
+  /** 0..1, nível do sinal */
+  level: number;
+  /** arquivo ausente / codec sem suporte */
+  unavailable: boolean;
+  /** mudo ou fora da mixagem */
+  silenced: boolean;
+  /** destaque (som escolhido na lista) */
+  selected: boolean;
+}
+
+interface SoundMarker {
+  src: AmbientSound;
+  icon: THREE.Sprite;
+  iconMat: THREE.SpriteMaterial;
+  ring: THREE.Sprite;
+  ringMat: THREE.SpriteMaterial;
+  fill: THREE.MeshBasicMaterial | null;
+  wire: THREE.MeshBasicMaterial | null;
+  baseScale: number;
+}
 
 const HULL_COLORS: Record<number, number> = { 1: 0x3fb950, 2: 0x4c7cf3, 3: 0xf0883e };
 
@@ -112,6 +140,17 @@ function speakerIcon(): THREE.CanvasTexture {
     g.stroke();
     g.beginPath();
     g.arc(37, 32, 14, -0.9, 0.9);
+    g.stroke();
+  });
+}
+
+/** Anel branco fino (pulso do som tocando); a cor vem do material do sprite. */
+function ringIcon(): THREE.CanvasTexture {
+  return iconTexture((g) => {
+    g.lineWidth = 4;
+    g.strokeStyle = "#ffffff";
+    g.beginPath();
+    g.arc(32, 32, 28, 0, Math.PI * 2);
     g.stroke();
   });
 }
@@ -198,6 +237,11 @@ export class Overlays {
     routes: false,
     volumes: false,
   };
+  // ---- sons 3D (alcance, ícone e pulso por som)
+  private readonly ambients: AmbientSound[] = [];
+  private soundGroup: THREE.Group | null = null;
+  private soundMarkers: SoundMarker[] = [];
+  private soundVisible = false;
   /** esfera de raio do som selecionado */
   private readonly radiusBall: THREE.Mesh;
   /** quantidade de marcadores por camada (para a interface esconder o que não existe) */
@@ -230,6 +274,7 @@ export class Overlays {
       if (e.type === "light") {
         if (lights.length < MAX_LIGHTS) lights.push(e);
       } else if (e.type === "ambient") {
+        if (this.ambients.length < MAX_SOUND3D) this.ambients.push(e);
         if (markers++ < MAX_MARKERS) this.addIconMarker("sounds", this.icons.speaker, e, e.origin, 2.2);
       } else if (e.type === "decal") {
         if (markers++ < MAX_MARKERS) this.addIconMarker("decals", this.icons.decal, e, e.origin, 1.6);
@@ -704,6 +749,90 @@ export class Overlays {
     this.radiusBall.visible = true;
   }
 
+  // ------------------------------------------------------------------ sons 3D
+
+  /** Os `ambient_generic` do mapa na ordem em que a camada "Sons 3D" os numera (até `MAX_SOUND3D`). */
+  ambientSources(): readonly AmbientSound[] {
+    return this.ambients;
+  }
+
+  /** Liga/desliga o desenho de alcance, ícone e pulso dos sons; os objetos nascem na primeira vez. */
+  setSoundVisuals(on: boolean): void {
+    this.soundVisible = on;
+    if (on && !this.soundGroup) this.buildSoundVisuals();
+    if (this.soundGroup) this.soundGroup.visible = on;
+  }
+
+  private buildSoundVisuals(): void {
+    const group = new THREE.Group();
+    group.name = "sound3d";
+    this.group.add(group);
+    this.soundGroup = group;
+    const sphere = new THREE.SphereGeometry(1, 28, 16);
+    const ringTex = ringIcon();
+    this.disposables.push(sphere, ringTex);
+    this.ambients.forEach((src, id) => {
+      const color = new THREE.Color().setHSL(soundHue(id) / 360, 0.75, 0.58);
+      const [x, y, z] = toWorld(src.origin[0], src.origin[1], src.origin[2]);
+      let fill: THREE.MeshBasicMaterial | null = null;
+      let wire: THREE.MeshBasicMaterial | null = null;
+      if (src.radius !== null && src.radius > 0) {
+        fill = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.045, side: THREE.BackSide, depthWrite: false, fog: false });
+        wire = new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: 0.22, depthWrite: false, fog: false });
+        const a = new THREE.Mesh(sphere, fill);
+        const b = new THREE.Mesh(sphere, wire);
+        for (const m of [a, b]) {
+          m.position.set(x, y, z);
+          m.scale.setScalar(src.radius);
+          m.renderOrder = 5;
+          m.raycast = () => undefined; // o alcance não rouba o clique dos ícones
+          group.add(m);
+        }
+        this.disposables.push(fill, wire);
+      }
+      const iconMat = new THREE.SpriteMaterial({ map: this.icons.speaker, color, depthTest: false, transparent: true, fog: false });
+      const icon = new THREE.Sprite(iconMat);
+      const baseScale = this.unit * 2.2 * 2;
+      icon.position.set(x, y, z);
+      icon.scale.setScalar(baseScale);
+      icon.renderOrder = 22;
+      icon.userData.pick = src;
+      const ringMat = new THREE.SpriteMaterial({ map: ringTex, color, depthTest: false, transparent: true, opacity: 0, fog: false });
+      const ring = new THREE.Sprite(ringMat);
+      ring.position.set(x, y, z);
+      ring.scale.setScalar(baseScale);
+      ring.renderOrder = 21;
+      ring.visible = false;
+      group.add(icon, ring);
+      this.pickables.push(icon);
+      this.disposables.push(iconMat, ringMat);
+      this.soundMarkers.push({ src, icon, iconMat, ring, ringMat, fill, wire, baseScale });
+    });
+  }
+
+  /** Anima o pulso e o brilho do alcance conforme o estado de cada som (índice = id do som). */
+  updateSoundVisuals(visuals: readonly (SoundVisual | undefined)[], time: number): void {
+    if (!this.soundVisible) return;
+    this.soundMarkers.forEach((m, id) => {
+      const v = visuals[id];
+      const playing = !!v?.playing;
+      const dim = !!v && (v.unavailable || v.silenced);
+      m.iconMat.opacity = v?.unavailable ? 0.4 : dim ? 0.55 : 1;
+      m.icon.scale.setScalar(m.baseScale * (v?.selected ? 1.35 : 1));
+      if (m.wire) m.wire.opacity = v?.selected ? 0.6 : playing ? 0.32 : 0.18;
+      if (m.fill) m.fill.opacity = v?.selected ? 0.12 : playing ? 0.075 : 0.04;
+      m.ring.visible = playing;
+      if (playing) {
+        const phase = (time * 1.1 + id * 0.37) % 1;
+        const lvl = v ? v.level : 0;
+        m.ring.scale.setScalar(m.baseScale * (1 + phase * 2.4));
+        m.ringMat.opacity = (1 - phase) * (0.35 + 0.65 * lvl);
+        // o ícone "bate" com o nível do sinal
+        m.icon.scale.setScalar(m.baseScale * (v?.selected ? 1.35 : 1) * (1 + lvl * 0.35));
+      }
+    });
+  }
+
   // ------------------------------------------------------------------ descarte
 
   dispose(): void {
@@ -717,6 +846,8 @@ export class Overlays {
     this.categories.clear();
     this.pickables.length = 0;
     this.spriteInsts.length = 0;
+    this.soundMarkers.length = 0;
+    this.soundGroup = null;
     this.spriteBanks.clear();
     this.hullGroups.clear();
     this.group.removeFromParent();

@@ -765,3 +765,105 @@
 .status[hidden] {
   display: none;
 }
+
+/* sprites: alternador 2D | 3D e cena Three.js */
+.spr-mode {
+  display: inline-flex;
+}
+
+.spr-mode-btn {
+  padding: 0.25rem 0.8rem;
+  border-radius: 0;
+  font-weight: 600;
+}
+
+.spr-mode-btn:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.spr-mode-btn:last-child {
+  border-radius: 0 6px 6px 0;
+  margin-left: -1px;
+}
+
+.spr-mode-btn.active {
+  background: var(--warm);
+  border-color: var(--warm);
+  color: #0d1117;
+}
+
+.spr-player[data-mode="3d"] .only-2d {
+  display: none;
+}
+
+.spr3d-stage {
+  position: relative;
+  height: min(46vh, 480px);
+  min-height: 280px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--well);
+}
+
+.spr3d-stage[hidden],
+.spr3d-panel[hidden] {
+  display: none;
+}
+
+.s3d-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+  outline-offset: -2px;
+}
+
+.s3d-canvas:active {
+  cursor: grabbing;
+}
+
+.spr3d-panel {
+  margin-top: 0.4rem;
+}
+
+.spr3d-panel .s3d-row {
+  margin: 0.45rem 0;
+}
+
+.s3d-angles {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.8rem;
+  align-items: center;
+}
+
+.s3d-angles b {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.spr3d-panel input[type="color"] {
+  width: 2.2rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: none;
+}
+
+.s3d-rule,
+.s3d-note {
+  margin: 0.25rem 0;
+  font-size: 0.8rem;
+}
+
+.s3d-warn {
+  margin: 0.25rem 0;
+  font-size: 0.8rem;
+  color: var(--warm);
+}
+
+.s3d-warn[hidden] {
+  display: none;
+}
