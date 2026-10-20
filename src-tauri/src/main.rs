@@ -2,7 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use bsp_museum_core::util::{self, write_atomic};
-use bsp_museum_core::{audio, audit, bsp, catalog, compare, entity_list, image, mdl, modfiles, radar, spr, wadlist};
+use bsp_museum_core::{audio, audit, bsp, catalog, compare, entity_list, hulls, image, mdl, modfiles, radar, scene, spr, volumes, wadlist};
 
 use catalog::{MapDetail, MapSummary};
 use serde::{Deserialize, Serialize};
@@ -155,6 +155,33 @@ async fn map_entities(path: String) -> Result<Vec<entity_list::EntityRow>, Strin
         Ok(entity_list::list(&bsp, &parsed))
     })
     .await?
+}
+
+#[tauri::command]
+async fn map_hulls(
+    path: String,
+    hull: usize,
+    model: Option<usize>,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<hulls::HullMesh, String> {
+    blocking(move || {
+        hulls::hull_mesh_with(
+            &PathBuf::from(path),
+            hulls::HullQuery { hull, model: model.unwrap_or(0), offset: offset.unwrap_or(0), limit: limit.unwrap_or(200_000) },
+        )
+    })
+    .await?
+}
+
+#[tauri::command]
+async fn map_volumes(path: String) -> Result<volumes::VolumeReport, String> {
+    blocking(move || volumes::volumes(&PathBuf::from(path))).await?
+}
+
+#[tauri::command]
+async fn map_scene(path: String) -> Result<scene::SceneEntities, String> {
+    blocking(move || scene::scene_of(&PathBuf::from(path))).await?
 }
 
 /// Auditoria da pasta inteira (diagnóstico completo + duplicados).
@@ -402,6 +429,9 @@ fn main() {
             map_detail,
             map_mesh,
             map_entities,
+            map_hulls,
+            map_volumes,
+            map_scene,
             audit_folder,
             compare_maps,
             map_radar,

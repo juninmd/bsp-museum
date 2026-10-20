@@ -34,6 +34,18 @@ pub struct Atlas {
     pub rgba: Vec<u8>,
     /// um item por face do BSP; `None` = face sem lightmap (usa o texel branco)
     pub faces: Vec<Option<FaceLight>>,
+    /// luz dos slots de estilo 1..=3 (`styles[1..4]`), com o **mesmo layout** do atlas
+    /// principal (mesmo retângulo, mesma UV). Fundo preto: o shader soma cada camada,
+    /// multiplicada pelo padrão do estilo da face naquele slot. Só existem as camadas
+    /// que alguma face usa.
+    pub layers: Vec<AtlasLayer>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AtlasLayer {
+    /// slot do estilo na face (1, 2 ou 3)
+    pub slot: u8,
+    pub rgba: Vec<u8>,
 }
 
 impl Atlas {
@@ -63,6 +75,9 @@ pub fn st_of(vecs: &[[f32; 4]; 2], p: [f32; 3]) -> (f32, f32) {
         vecs[1][0] * p[0] + vecs[1][1] * p[1] + vecs[1][2] * p[2] + vecs[1][3],
     )
 }
+
+/// retângulo já pronto para o atlas: x, y, rgba (w × h), w, h
+type Block = (usize, usize, Vec<u8>, usize, usize);
 
 struct Packer {
     width: usize,
@@ -100,8 +115,10 @@ pub fn build_atlas(bsp: &Bsp) -> Option<Atlas> {
     }
     let bytes_per_texel = if bsp.is_quake() { 1 } else { 3 };
     let mut packer = Packer { width: ATLAS_WIDTH, cursor_x: 0, shelf_y: 0, shelf_h: 0 };
-    let mut pixels: Vec<(usize, usize, Vec<u8>, usize, usize)> = Vec::new(); // x, y, rgba(w+2 × h+2), w, h
+    let mut pixels: Vec<Block> = Vec::new(); // x, y, rgba(w+2 × h+2), w, h
     let mut faces: Vec<Option<FaceLight>> = vec![None; bsp.faces.len()];
+    // blocos dos slots 1..=3, mesmo retângulo do slot 0
+    let mut layer_blocks: [Vec<Block>; 3] = Default::default();
 
     // Bloco branco 2×2 no canto (0,0): é o "sem luz" — UV (1/W, 1/H) cai no centro dele.
     let (wx, wy) = packer.place(2, 2)?;
@@ -155,16 +172,32 @@ pub fn build_atlas(bsp: &Bsp) -> Option<Atlas> {
         let (pw, ph) = (w + 2, h + 2);
         // atlas cheio: esta face fica sem luz, mas uma menor adiante ainda pode caber
         let Some((px, py)) = packer.place(pw, ph) else { continue };
-        let mut block = vec![255u8; pw * ph * 4];
-        for y in 0..ph {
-            let sy = y.saturating_sub(1).min(h - 1);
-            for x in 0..pw {
-                let sx = x.saturating_sub(1).min(w - 1);
-                let i = (sy * w + sx) * bytes_per_texel;
-                let rgb = if bytes_per_texel == 3 { [src[i], src[i + 1], src[i + 2]] } else { [src[i]; 3] };
-                let o = (y * pw + x) * 4;
-                block[o..o + 3].copy_from_slice(&rgb);
+        let make_block = |src: &[u8], base: u8| {
+            let mut block = vec![base; pw * ph * 4];
+            for y in 0..ph {
+                let sy = y.saturating_sub(1).min(h - 1);
+                for x in 0..pw {
+                    let sx = x.saturating_sub(1).min(w - 1);
+                    let i = (sy * w + sx) * bytes_per_texel;
+                    let rgb = if bytes_per_texel == 3 { [src[i], src[i + 1], src[i + 2]] } else { [src[i]; 3] };
+                    let o = (y * pw + x) * 4;
+                    block[o..o + 3].copy_from_slice(&rgb);
+                    block[o + 3] = 255;
+                }
             }
+            block
+        };
+        let block = make_block(src, 255);
+        // estilos 1..=3: blocos seguintes no lump, na ordem dos slots preenchidos
+        for slot in 1..4usize {
+            if face.styles[slot] == 255 {
+                break;
+            }
+            let from = start + slot * w * h * bytes_per_texel;
+            let Some(extra) = from.checked_add(w * h * bytes_per_texel).and_then(|end| bsp.lighting.get(from..end)) else {
+                break;
+            };
+            layer_blocks[slot - 1].push((px, py, make_block(extra, 0), pw, ph));
         }
         pixels.push((px, py, block, pw, ph));
         faces[index] = Some(FaceLight { x: px + 1, y: py + 1, min_s: bmin_s * 16.0, min_t: bmin_t * 16.0 });
@@ -178,7 +211,24 @@ pub fn build_atlas(bsp: &Bsp) -> Option<Atlas> {
             rgba[dst..dst + pw * 4].copy_from_slice(&block[y * pw * 4..(y + 1) * pw * 4]);
         }
     }
-    Some(Atlas { width: ATLAS_WIDTH, height, rgba, faces })
+    let mut layers = Vec::new();
+    for (i, blocks) in layer_blocks.iter().enumerate() {
+        if blocks.is_empty() {
+            continue;
+        }
+        let mut layer = vec![0u8; ATLAS_WIDTH * height * 4];
+        for px in layer.chunks_exact_mut(4) {
+            px[3] = 255;
+        }
+        for (x0, y0, block, pw, ph) in blocks {
+            for y in 0..*ph {
+                let dst = ((y0 + y) * ATLAS_WIDTH + x0) * 4;
+                layer[dst..dst + pw * 4].copy_from_slice(&block[y * pw * 4..(y + 1) * pw * 4]);
+            }
+        }
+        layers.push(AtlasLayer { slot: i as u8 + 1, rgba: layer });
+    }
+    Some(Atlas { width: ATLAS_WIDTH, height, rgba, faces, layers })
 }
 
 #[cfg(test)]
