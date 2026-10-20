@@ -1,4 +1,5 @@
 import { DICT_MODEL } from "./dict-model.ts";
+import { DICT_EXPLORER } from "./dict-explorer.ts";
 
 /**
  * Textos da interface: `[português, inglês]`. `{0}`, `{1}`… são argumentos de `t()`.
@@ -262,4 +263,7 @@ export const DICT: Record<string, [string, string]> = {
   "report.col.finding": ["Achado", "Finding"],
   "report.col.findings": ["Achados", "Findings"],
   ...DICT_MODEL,
+
+  // seção Explorador (arquivos do mod, WAD, sprites, áudio)
+  ...DICT_EXPLORER,
 };
