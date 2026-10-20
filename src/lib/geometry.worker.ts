@@ -15,6 +15,7 @@ self.onmessage = (event: MessageEvent<Request>) => {
     for (const c of chunks) {
       transfer.push(c.positions.buffer, c.uvs.buffer, c.colors.buffer, c.triFace.buffer);
       if (c.lmUvs.length) transfer.push(c.lmUvs.buffer);
+      if (c.styles.length) transfer.push(c.styles.buffer);
     }
     (self as unknown as Worker).postMessage({ id, chunks }, transfer);
   } catch (error) {

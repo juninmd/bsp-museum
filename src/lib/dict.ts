@@ -2,6 +2,8 @@
  * Textos da interface: `[português, inglês]`. `{0}`, `{1}`… são argumentos de `t()`.
  * Uma fonte só para os dois idiomas — chave sem par não passa no teste de paridade.
  */
+import { DICT_VIEWER } from "./dict-viewer.ts";
+
 export const DICT: Record<string, [string, string]> = {
   locale: ["pt-BR", "en-US"],
 
@@ -259,4 +261,6 @@ export const DICT: Record<string, [string, string]> = {
   "report.col.rule": ["Regra", "Rule"],
   "report.col.finding": ["Achado", "Finding"],
   "report.col.findings": ["Achados", "Findings"],
+
+  ...DICT_VIEWER,
 };

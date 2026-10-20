@@ -1,8 +1,32 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import {
+  fillStyleTable,
+  frameIndex,
+  moverPose,
+  renderFxFactor,
+  routePosition,
+  scrollOffset,
+  STYLE_SLOTS,
+  TEXTURE_FRAME_INTERVAL,
+} from "./lib/anim.ts";
 import { buildChunks, toWorld, visibleIndices, type Chunk } from "./lib/geometry.ts";
 import { inputFromMesh } from "./lib/chunker.ts";
 import { Pvs } from "./lib/pvs.ts";
+import { Overlays, rgb01, type OverlayKey, type PickInfo, type VolumeCategory } from "./viewer-overlays.ts";
+import type {
+  BrushModelInfo,
+  EnvFog,
+  HullMesh,
+  LightEnvironment,
+  Mover,
+  RenderProps,
+  ScrollInfo,
+  TrainRoute,
+  Vec3,
+  VolumeReport,
+} from "./types/bsp-extra.ts";
+import type { SpriteInfo } from "./types/formats.ts";
 import type { MeshDetail, SkyBox } from "./types.ts";
 
 export interface ViewerStats {
@@ -13,6 +37,25 @@ export interface ViewerStats {
   /** folha do BSP em que a câmera está (-1 = sem árvore) */
   leaf: number;
   pvsActive: boolean;
+}
+
+/** Camadas que o painel "Camadas" liga e desliga. */
+export type LayerName =
+  | "renderModes"
+  | "scroll"
+  | "texAnim"
+  | "texAlt"
+  | "lightAnim"
+  | "movers"
+  | "fog"
+  | "sun"
+  | "sky"
+  | OverlayKey;
+
+export interface LayerStat {
+  /** quantos itens a camada tem neste mapa (0 = a interface esconde o controle) */
+  count: number;
+  on: boolean;
 }
 
 export interface Viewer3D {
@@ -28,6 +71,23 @@ export interface Viewer3D {
   exitFirstPerson(): void;
   setFullscreen(on: boolean): void;
   onStats(listener: (s: ViewerStats) => void): void;
+
+  /** liga/desliga uma camada do painel "Camadas" */
+  setLayer(name: LayerName, on: boolean): void;
+  /** quantidade e estado de cada camada */
+  layers(): Record<LayerName, LayerStat>;
+  /** janela de um hull de colisão (1..3); várias janelas se somam até `clearHull` */
+  addHullWindow(hull: number, win: HullMesh): void;
+  clearHull(hull: number): void;
+  /** mostra/esconde um hull já carregado sem descartar a geometria */
+  setHullVisible(hull: number, on: boolean): void;
+  setVolumes(report: VolumeReport): void;
+  volumeCategories(): VolumeCategory[];
+  setVolumeCategory(key: string, on: boolean): void;
+  volumesTruncated(): boolean;
+  /** `.spr` que as entidades de sprite pedem */
+  spriteModels(): string[];
+  setSpriteInfo(model: string, info: SpriteInfo | null): void;
   dispose(): void;
 }
 
@@ -44,19 +104,94 @@ export interface Viewer3DOptions {
  */
 const LIGHTMAP_INTENSITY = 2 * Math.PI;
 
+function configureTexture(tex: THREE.Texture): void {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  // No GoldSrc o `t` do texinfo cresce para baixo: v=0 é a primeira linha do bitmap.
+  // O padrão do Three.js (flipY) espelharia a textura na vertical.
+  tex.flipY = false;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+}
+
 function buildTextures(mesh: MeshDetail): (THREE.Texture | null)[] {
-  return mesh.textures.map((t) => {
-    if (!t.png) return null;
-    const tex = new THREE.TextureLoader().load(t.png);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    // No GoldSrc o `t` do texinfo cresce para baixo: v=0 é a primeira linha do bitmap.
-    // O padrão do Three.js (flipY) espelharia a textura na vertical.
-    tex.flipY = false;
-    tex.wrapS = THREE.RepeatWrapping;
-    tex.wrapT = THREE.RepeatWrapping;
-    tex.minFilter = THREE.LinearMipmapLinearFilter;
+  return mesh.textures.map((tx) => {
+    if (!tx.png) return null;
+    const tex = new THREE.TextureLoader().load(tx.png);
+    configureTexture(tex);
     return tex;
   });
+}
+
+/** Camada do lightmap: valores crus (128 -> 0,5), sem mipmap, na uv1 do atlas. */
+function lightmapTexture(png: string): THREE.Texture {
+  const tex = new THREE.TextureLoader().load(png);
+  tex.colorSpace = THREE.NoColorSpace; // valores já em escala de exibição
+  tex.flipY = false; // mesma convenção da textura: linha 0 do atlas em v=0
+  tex.channel = 1; // uv1
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  return tex;
+}
+
+/** Uniforms compartilhados por todos os materiais com luz animada (um objeto, uma atualização). */
+interface LightStyleUniforms {
+  uStyleVal: { value: Float32Array };
+  uLayer1: { value: THREE.Texture };
+  uLayer2: { value: THREE.Texture };
+  uLayer3: { value: THREE.Texture };
+  uAnimOn: { value: number };
+}
+
+/**
+ * Troca a leitura do lightmap do `MeshBasicMaterial` por
+ *   luz = atlas * mult(estilo0) + Σ camada[k] * mult(estilo k)
+ * com `mult` vindo de uma tabela `id -> valor` atualizada a 10 Hz. Estilo 0 vale sempre 1,
+ * então um chunk só com estilo 0 sai idêntico ao material comum.
+ */
+function patchLightStyles(material: THREE.MeshBasicMaterial, uniforms: LightStyleUniforms): void {
+  material.customProgramCacheKey = () => "bsp-lightstyles";
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <uv_pars_vertex>", "#include <uv_pars_vertex>\nattribute vec4 lmStyles;\nvarying vec4 vLmStyles;")
+      .replace("#include <uv_vertex>", "#include <uv_vertex>\n\tvLmStyles = lmStyles;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <lightmap_pars_fragment>",
+        `#include <lightmap_pars_fragment>
+#ifdef USE_LIGHTMAP
+varying vec4 vLmStyles;
+uniform float uStyleVal[${STYLE_SLOTS}];
+uniform sampler2D uLayer1;
+uniform sampler2D uLayer2;
+uniform sampler2D uLayer3;
+uniform float uAnimOn;
+float styleMult( float id ) {
+	int i = int( id + 0.5 );
+	return i < ${STYLE_SLOTS} ? uStyleVal[ i ] : 0.0;
+}
+vec4 styledLightmap( vec2 uv, vec4 st ) {
+	vec3 c = texture2D( lightMap, uv ).rgb * ( st.x > 254.5 ? 1.0 : styleMult( st.x ) );
+	if ( uAnimOn > 0.5 ) {
+		if ( st.y < 254.5 ) c += texture2D( uLayer1, uv ).rgb * styleMult( st.y );
+		if ( st.z < 254.5 ) c += texture2D( uLayer2, uv ).rgb * styleMult( st.z );
+		if ( st.w < 254.5 ) c += texture2D( uLayer3, uv ).rgb * styleMult( st.w );
+	}
+	return vec4( c, 1.0 );
+}
+#endif`,
+      )
+      .replace("vec4 lightMapTexel = texture2D( lightMap, vLightMapUv );", "vec4 lightMapTexel = styledLightmap( vLightMapUv, vLmStyles );");
+  };
+}
+
+/** Grupo de textura animada (`+0nome`…): quadros prontos para trocar no material. */
+interface AnimGroup {
+  frames: THREE.Texture[];
+  alt: THREE.Texture[];
+  interval: number;
 }
 
 interface Entry {
@@ -67,6 +202,47 @@ interface Entry {
   /** triângulos ligados pelo PVS neste chunk (os que o frustum pode ainda descartar) */
   drawn: number;
   texMaterial: THREE.MeshBasicMaterial;
+  /** textura da face (null = só cor) */
+  baseMap: THREE.Texture | null;
+  /** propriedades de render da brush entity dona (null = geometria comum) */
+  render: RenderProps | null;
+  /** rolagem das texturas `scroll*` desta brush entity */
+  scroll: ScrollInfo | null;
+  /** clone da textura com offset próprio (criado quando a imagem carrega) */
+  scrollTex: THREE.Texture | null;
+  anim: AnimGroup | null;
+  /** o chunk tem faces com estilo de luz animado (material com shader de estilos) */
+  styled: boolean;
+  /** opacidade do modo de render, antes do fator do `renderfx` */
+  baseOpacity: number;
+}
+
+/** Brush entity: grupo com origem/pivô próprios, para mover e girar sem tocar nos buffers. */
+interface ModelNode {
+  model: number;
+  /** posição do mapa (e do movimento) */
+  outer: THREE.Group;
+  /** leva o pivô para a origem do grupo */
+  holder: THREE.Group;
+  /** `origin` do mapa: o modelo é compilado relativo a ele (brush com origin brush) */
+  origin: Vec3;
+  /** pivô da rotação, no espaço do modelo */
+  pivot: Vec3;
+  mover: Mover | null;
+  route: TrainRoute | null;
+}
+
+const ROTATING_KINDS = new Set(["rotating", "door_rotating", "rot_button"]);
+const isZero = (v: readonly number[]) => !v[0] && !v[1] && !v[2];
+
+/** Rotação (pitch, yaw, roll) em graus, no espaço do mapa, como quaternion do Three.js. */
+function rotationOf(rot: Vec3, out: THREE.Quaternion): THREE.Quaternion {
+  const d = Math.PI / 180;
+  // eixos do mapa no mundo Y-up: X -> X, Y -> -Z, Z -> Y
+  const qz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rot[1] * d);
+  const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, -1), rot[0] * d);
+  const qx = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), rot[2] * d);
+  return out.copy(qz).multiply(qy).multiply(qx);
 }
 
 /**
@@ -99,8 +275,9 @@ export function mount3D(
 
   // Luz ambiente alta + hemisférica: sem isso o chão (mais baixo, cor fria) vira
   // um vulto escuro sobre o fundo escuro e some de vista. Só afeta o modo "cor por altura".
-  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-  scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x33373d, 0.6));
+  const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+  const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x33373d, 0.6);
+  scene.add(ambient, hemi);
   const sun = new THREE.DirectionalLight(0xffffff, 0.9);
   sun.position.set(1, 2, 1.4);
   scene.add(sun);
@@ -117,17 +294,80 @@ export function mount3D(
   });
 
   const textures = buildTextures(mesh);
+  const owned: THREE.Texture[] = [...textures.filter((x): x is THREE.Texture => x !== null)];
   let lightmapTex: THREE.Texture | null = null;
   if (mesh.lightmap && mesh.lm_uvs.length) {
-    lightmapTex = new THREE.TextureLoader().load(mesh.lightmap);
-    // valores já em escala de exibição: lidos crus (128 -> 0,5), não decodificados como sRGB
-    lightmapTex.colorSpace = THREE.NoColorSpace;
-    lightmapTex.flipY = false; // mesma convenção da textura: linha 0 do atlas em v=0
-    lightmapTex.channel = 1; // uv1
-    lightmapTex.minFilter = THREE.LinearFilter;
-    lightmapTex.magFilter = THREE.LinearFilter;
-    lightmapTex.generateMipmaps = false;
+    lightmapTex = lightmapTexture(mesh.lightmap);
+    owned.push(lightmapTex);
   }
+
+  // ---- luz animada: camadas dos slots 1..3 + tabela de multiplicadores por estilo
+  const styleTable = new Float32Array(STYLE_SLOTS).fill(1);
+  let blackTex: THREE.DataTexture | null = null;
+  const layerTex = (slot: number): THREE.Texture => {
+    const layer = mesh.lightmap_layers.find((l) => l.slot === slot);
+    if (layer) {
+      const tx = lightmapTexture(layer.png);
+      owned.push(tx);
+      return tx;
+    }
+    if (!blackTex) {
+      blackTex = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+      blackTex.needsUpdate = true;
+      owned.push(blackTex);
+    }
+    return blackTex;
+  };
+  const styleUniforms: LightStyleUniforms | null = lightmapTex && chunks.some((c) => c.styles.length)
+    ? {
+        uStyleVal: { value: styleTable },
+        uLayer1: { value: layerTex(1) },
+        uLayer2: { value: layerTex(2) },
+        uLayer3: { value: layerTex(3) },
+        uAnimOn: { value: 1 },
+      }
+    : null;
+
+  // ---- tabelas por modelo / textura
+  const bmByModel = new Map<number, BrushModelInfo>();
+  for (const bm of mesh.brush_models) bmByModel.set(bm.model, bm);
+  const moverByModel = new Map<number, Mover>();
+  for (const e of mesh.scene.entities) if (e.type === "mover" && e.model !== null && !moverByModel.has(e.model)) moverByModel.set(e.model, e);
+  const routeByTrain = new Map<number, TrainRoute>();
+  for (const r of mesh.scene.routes) routeByTrain.set(r.train, r);
+
+  const animBySlot = new Map<number, AnimGroup>();
+  for (const a of mesh.texture_anims) {
+    const pick = (slots: number[]) => slots.filter((s) => s >= 0 && textures[s]).map((s) => textures[s]!);
+    const group: AnimGroup = { frames: pick(a.frame_slots), alt: pick(a.alt_slots), interval: a.interval > 0 ? a.interval : TEXTURE_FRAME_INTERVAL };
+    if (group.frames.length < 2 && group.alt.length < 2) continue;
+    for (const s of [...a.frame_slots, ...a.alt_slots]) if (s >= 0) animBySlot.set(s, group);
+  }
+
+  const world = new THREE.Group();
+  scene.add(world);
+  const nodes = new Map<number, ModelNode>();
+  const nodeFor = (model: number): ModelNode => {
+    let node = nodes.get(model);
+    if (node) return node;
+    const bm = bmByModel.get(model);
+    const mover = moverByModel.get(model) ?? null;
+    const origin: Vec3 = bm?.origin ?? [0, 0, 0];
+    // girar em torno do centro quando o mapeador esqueceu o origin brush
+    let pivot: Vec3 = [0, 0, 0];
+    if (bm && mover && ROTATING_KINDS.has(mover.kind) && isZero(origin)) {
+      pivot = [(bm.mins[0] + bm.maxs[0]) / 2, (bm.mins[1] + bm.maxs[1]) / 2, (bm.mins[2] + bm.maxs[2]) / 2];
+    }
+    const outer = new THREE.Group();
+    const holder = new THREE.Group();
+    outer.add(holder);
+    outer.position.set(...toWorld(origin[0] + pivot[0], origin[1] + pivot[1], origin[2] + pivot[2]));
+    holder.position.set(...toWorld(-pivot[0], -pivot[1], -pivot[2]));
+    scene.add(outer);
+    node = { model, outer, holder, origin, pivot, mover, route: mover ? (routeByTrain.get(mover.entity) ?? null) : null };
+    nodes.set(model, node);
+    return node;
+  };
 
   const entries: Entry[] = [];
   let totalTriangles = 0;
@@ -137,6 +377,8 @@ export function mount3D(
     geometry.setAttribute("uv", new THREE.BufferAttribute(chunk.uvs, 2));
     if (chunk.lmUvs.length) geometry.setAttribute("uv1", new THREE.BufferAttribute(chunk.lmUvs, 2));
     geometry.setAttribute("color", new THREE.BufferAttribute(chunk.colors, 3));
+    const styled = chunk.styles.length > 0 && styleUniforms !== null;
+    if (styled) geometry.setAttribute("lmStyles", new THREE.BufferAttribute(chunk.styles, 4));
     const triCount = chunk.triFace.length;
     totalTriangles += triCount;
     const indices = new Uint32Array(triCount * 3);
@@ -146,18 +388,37 @@ export function mount3D(
     geometry.setIndex(index);
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(...chunk.center), chunk.radius);
 
-    const tex = chunk.textureIndex < textures.length ? textures[chunk.textureIndex] : undefined;
+    const baseMap = chunk.textureIndex < textures.length ? (textures[chunk.textureIndex] ?? null) : null;
     const texMaterial = new THREE.MeshBasicMaterial({
-      color: tex ? 0xffffff : 0x8b98a5,
+      color: baseMap ? 0xffffff : 0x8b98a5,
       side: THREE.DoubleSide,
-      map: tex ?? null,
+      map: baseMap,
       lightMap: lightmapTex,
       lightMapIntensity: LIGHTMAP_INTENSITY,
     });
+    if (styled) patchLightStyles(texMaterial, styleUniforms!);
+
+    const bm = chunk.model > 0 ? bmByModel.get(chunk.model) : undefined;
+    const texName = (mesh.textures[chunk.textureIndex]?.name ?? "").toLowerCase();
+    const scroll = bm?.scroll && bm.scroll.textures.some((n) => n.toLowerCase() === texName) ? bm.scroll : null;
 
     const meshObj = new THREE.Mesh(geometry, flatMaterial);
-    scene.add(meshObj);
-    entries.push({ mesh: meshObj, chunk, indices, drawn: triCount, texMaterial });
+    if (chunk.model > 0) nodeFor(chunk.model).holder.add(meshObj);
+    else world.add(meshObj);
+    entries.push({
+      mesh: meshObj,
+      chunk,
+      indices,
+      drawn: triCount,
+      texMaterial,
+      baseMap,
+      render: bm?.render ?? null,
+      scroll,
+      scrollTex: null,
+      anim: scroll ? null : (animBySlot.get(chunk.textureIndex) ?? null),
+      styled,
+      baseOpacity: 1,
+    });
   }
 
   // Spawns como esferas: azul CT, laranja T, verde resto.
@@ -192,6 +453,11 @@ export function mount3D(
   // Céu: a caixa real do mapa (gfx/env) se existir; senão um domo gradiente.
   const sky = loadSky(center, maxDim, mesh.skybox);
   scene.add(sky);
+
+  // Camadas por cima do mapa (hulls, volumes, luzes, sprites, sons, decalques, rotas).
+  const markerUnit = Math.max(4, Math.min(16, maxDim / 400));
+  const overlays = new Overlays(mesh, markerUnit);
+  scene.add(overlays.group);
 
   // Marcador de "você está aqui" para o foco em entidade.
   const marker = new THREE.Group();
@@ -316,6 +582,7 @@ export function mount3D(
     if (mode === "fps") return;
     mode = "fps";
     controls.enabled = false;
+    hideTip();
     (document.activeElement as HTMLElement | null)?.blur();
     // Inicia em um ponto de spawn (ou no centro) sem colisão — no-clip.
     const spawn = mesh.spawns[0];
@@ -381,16 +648,321 @@ export function mount3D(
   // Triângulos que realmente vão para a GPU: ligados pelo PVS e dentro do frustum.
   const frustum = new THREE.Frustum();
   const projView = new THREE.Matrix4();
+  const tmpSphere = new THREE.Sphere();
   const countDrawn = (): number => {
     camera.updateMatrixWorld();
     projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     frustum.setFromProjectionMatrix(projView);
     let n = 0;
     for (const e of entries) {
-      if (e.mesh.visible && frustum.intersectsSphere(e.mesh.geometry.boundingSphere!)) n += e.drawn;
+      if (!e.mesh.visible) continue;
+      // brush entity se move: a esfera precisa da matriz do mundo
+      const bs = e.chunk.model > 0 ? tmpSphere.copy(e.mesh.geometry.boundingSphere!).applyMatrix4(e.mesh.matrixWorld) : e.mesh.geometry.boundingSphere!;
+      if (frustum.intersectsSphere(bs)) n += e.drawn;
     }
     return n;
   };
+
+  // -------------------------------------------------------------------------
+  // Estado das camadas e dos materiais.
+  let texturedOn = opts.textured;
+  let lightmapsOn = true;
+  let transparentOn = false;
+  const layerOn: Record<LayerName, boolean> = {
+    renderModes: true,
+    scroll: true,
+    texAnim: true,
+    texAlt: false,
+    lightAnim: true,
+    movers: false,
+    fog: false,
+    sun: false,
+    sky: true,
+    lights: false,
+    sprites: false,
+    sounds: false,
+    decals: false,
+    routes: false,
+    volumes: false,
+  };
+  /** estilos ligáveis apagados (começam os `start_off`; clicar na luz alterna) */
+  const lightsOff = new Set<number>(mesh.lightstyles.filter((s) => s.switchable && s.start_off).map((s) => s.id));
+
+  /** Aplica modo de render, transparência global, luz e textura ao material do chunk. */
+  const configure = (e: Entry) => {
+    const mat = e.texMaterial;
+    const rp = layerOn.renderModes ? e.render : null;
+    const rmode = rp?.mode ?? 0;
+    mat.map = e.scrollTex ?? e.baseMap;
+    mat.color.set(e.baseMap ? 0xffffff : 0x8b98a5);
+    mat.transparent = transparentOn;
+    mat.depthWrite = !transparentOn;
+    mat.alphaTest = 0;
+    mat.blending = THREE.NormalBlending;
+    e.baseOpacity = 1;
+    let lit = true;
+    if (rp && rmode !== 0) {
+      const alpha = Math.max(0, Math.min(1, rp.amount / 255));
+      switch (rmode) {
+        case 1: // color: cor do rendercolor, com translucidez
+          mat.map = null;
+          mat.color.copy(rgb01(rp.color));
+          mat.transparent = true;
+          mat.depthWrite = false;
+          e.baseOpacity = alpha;
+          lit = false;
+          break;
+        case 2: // texture / 3 glow (para brush vale como texture)
+        case 3:
+          mat.transparent = true;
+          mat.depthWrite = false;
+          e.baseOpacity = alpha;
+          break;
+        case 4: // solid: teste de alpha (texturas `{`)
+          mat.alphaTest = 0.5;
+          mat.transparent = false;
+          mat.depthWrite = true;
+          break;
+        case 5: // additive
+          mat.blending = THREE.AdditiveBlending;
+          mat.transparent = true;
+          mat.depthWrite = false;
+          e.baseOpacity = alpha;
+          break;
+      }
+    }
+    mat.opacity = e.baseOpacity;
+    mat.lightMap = lightmapsOn && lit ? lightmapTex : null;
+    mat.needsUpdate = true;
+    e.mesh.renderOrder = rp && rmode !== 0 && mat.transparent ? 3 : 0;
+  };
+  const refreshMaterials = () => {
+    for (const e of entries) {
+      e.mesh.material = texturedOn ? e.texMaterial : flatMaterial;
+      configure(e);
+    }
+    forceTick();
+  };
+
+  // ---- relógio das animações
+  let animTime = 0;
+  let moverTime = 0;
+  let lastTick = -1;
+  let lastStyleTick = -1;
+  const forceTick = () => {
+    lastTick = -1;
+    lastStyleTick = -1;
+  };
+
+  const FX_ANIMATED = new Set([1, 2, 3, 4, 9, 10, 11, 12, 13]);
+  const fxEntries = entries.filter((e) => e.render && FX_ANIMATED.has(e.render.fx));
+  const scrollEntries = entries.filter((e) => e.scroll);
+  const animEntries = entries.filter((e) => e.anim);
+  const styleDefs = mesh.lightstyles;
+
+  const resetScroll = () => {
+    for (const e of scrollEntries) if (e.scrollTex) e.scrollTex.offset.x = 0;
+  };
+
+  const tickScroll = () => {
+    for (const e of scrollEntries) {
+      if (!e.scrollTex) {
+        // o clone só nasce quando a imagem existe: o Three.js avisaria de textura sem dados
+        if (!e.baseMap?.image) continue;
+        e.scrollTex = e.baseMap.clone();
+        owned.push(e.scrollTex);
+        if (e.render?.mode !== 1) e.texMaterial.map = e.scrollTex;
+      }
+      const img = e.baseMap?.image as { width?: number } | undefined;
+      e.scrollTex.offset.x = scrollOffset(e.scroll!.speed, animTime, img?.width ?? 64);
+    }
+  };
+
+  const tickTextures = () => {
+    const tickNow = Math.floor(animTime / TEXTURE_FRAME_INTERVAL);
+    if (tickNow === lastTick) return;
+    lastTick = tickNow;
+    for (const e of animEntries) {
+      if (e.render?.mode === 1 && layerOn.renderModes) continue;
+      const g = e.anim!;
+      const seq = layerOn.texAlt && g.alt.length > 1 ? g.alt : g.frames;
+      e.texMaterial.map = layerOn.texAnim && seq.length > 1 ? seq[frameIndex(seq.length, animTime, g.interval)]! : e.baseMap;
+    }
+  };
+
+  const tickStyles = () => {
+    const tickNow = Math.floor(animTime * 10);
+    if (tickNow === lastStyleTick) return;
+    lastStyleTick = tickNow;
+    fillStyleTable(styleTable, styleDefs, animTime, layerOn.lightAnim, lightsOff);
+    if (styleUniforms) styleUniforms.uAnimOn.value = layerOn.lightAnim ? 1 : 0;
+  };
+
+  const tickFx = () => {
+    if (!layerOn.renderModes) return;
+    for (const e of fxEntries) {
+      const m = e.render!.mode;
+      if (m === 0 || m === 4) continue;
+      e.texMaterial.opacity = e.baseOpacity * renderFxFactor(e.render!.fx, animTime);
+    }
+  };
+
+  // ---- movers
+  const tmpQuat = new THREE.Quaternion();
+  const placeNode = (n: ModelNode, offset: Vec3, rot: Vec3) => {
+    n.outer.position.set(...toWorld(n.origin[0] + n.pivot[0] + offset[0], n.origin[1] + n.pivot[1] + offset[1], n.origin[2] + n.pivot[2] + offset[2]));
+    n.outer.quaternion.copy(rotationOf(rot, tmpQuat));
+  };
+  const resetMovers = () => {
+    for (const n of nodes.values()) placeNode(n, [0, 0, 0], [0, 0, 0]);
+  };
+  const tickMovers = () => {
+    for (const n of nodes.values()) {
+      const m = n.mover;
+      if (!m) continue;
+      if ((m.kind === "train" || m.kind === "track_train") && n.route && n.route.points.length > 0) {
+        // o centro da caixa do trem passa pelos pontos; o modelo está no espaço local dele
+        const c: Vec3 = [(m.mins[0] + m.maxs[0]) / 2, (m.mins[1] + m.maxs[1]) / 2, (m.mins[2] + m.maxs[2]) / 2];
+        const p = routePosition(n.route, m.speed, moverTime);
+        // posição absoluta = ponto - centro; como placeNode soma a origem do mapa, desconta ela
+        placeNode(n, [p[0] - c[0] - n.origin[0], p[1] - c[1] - n.origin[1], p[2] - c[2] - n.origin[2]], [0, 0, 0]);
+      } else {
+        const pose = moverPose(m, moverTime);
+        placeNode(n, pose.offset, pose.rot);
+      }
+    }
+  };
+  const moverCount = [...nodes.values()].filter((n) => n.mover).length;
+
+  // ---- névoa, sol
+  const fogEnt = mesh.scene.entities.find((e): e is EnvFog => e.type === "env_fog");
+  const sunEnt = mesh.scene.entities.find((e): e is LightEnvironment => e.type === "light_environment");
+  const bumpMaterials = () => {
+    for (const e of entries) e.texMaterial.needsUpdate = true;
+    flatMaterial.needsUpdate = true;
+  };
+  const setFog = (on: boolean) => {
+    if (!fogEnt) return;
+    scene.fog = on ? new THREE.Fog(rgb01(fogEnt.color), fogEnt.start, Math.max(fogEnt.end, fogEnt.start + 1)) : null;
+    bumpMaterials();
+  };
+  let sunArrow: THREE.ArrowHelper | null = null;
+  const setSun = (on: boolean) => {
+    if (!sunEnt) return;
+    const d = toWorld(sunEnt.direction[0], sunEnt.direction[1], sunEnt.direction[2]);
+    const dir = new THREE.Vector3(...d).normalize();
+    if (on) {
+      sun.color.copy(rgb01(sunEnt.color));
+      sun.position.copy(dir).multiplyScalar(-1); // a luz vem do lado oposto ao que ela viaja
+      sun.intensity = 1.6;
+      ambient.intensity = 0.25;
+      hemi.intensity = 0.25;
+      fill.intensity = 0.05;
+      if (!sunArrow) {
+        const len = Math.max(40, maxDim / 6);
+        sunArrow = new THREE.ArrowHelper(dir, new THREE.Vector3(center[0], center[1] + size[1] / 2 + len, center[2]).addScaledVector(dir, -len), len, sun.color.getHex(), len * 0.3, len * 0.16);
+        scene.add(sunArrow);
+      }
+    } else {
+      sun.color.set(0xffffff);
+      sun.position.set(1, 2, 1.4);
+      sun.intensity = 0.9;
+      ambient.intensity = 0.6;
+      hemi.intensity = 0.6;
+      fill.intensity = 0.25;
+      if (sunArrow) {
+        scene.remove(sunArrow);
+        sunArrow.dispose();
+        sunArrow = null;
+      }
+    }
+  };
+
+  // ---- balão de informação (hover/clique nos marcadores)
+  const tip = document.createElement("div");
+  tip.className = "v3-tip";
+  tip.hidden = true;
+  container.appendChild(tip);
+  const showTip = (info: PickInfo, x: number, y: number, pinned: boolean) => {
+    tip.replaceChildren();
+    const h = document.createElement("strong");
+    h.textContent = info.title;
+    tip.append(h);
+    for (const line of info.lines) {
+      const p = document.createElement("div");
+      p.textContent = line;
+      tip.append(p);
+    }
+    tip.classList.toggle("pinned", pinned);
+    tip.hidden = false;
+    const box = container.getBoundingClientRect();
+    const left = Math.min(Math.max(4, x - box.left + 14), Math.max(4, box.width - tip.offsetWidth - 4));
+    const top = Math.min(Math.max(4, y - box.top + 14), Math.max(4, box.height - tip.offsetHeight - 4));
+    tip.style.left = `${left}px`;
+    tip.style.top = `${top}px`;
+  };
+  function hideTip() {
+    tip.hidden = true;
+  }
+
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  let pointer: { x: number; y: number } | null = null;
+  let pointerDirty = false;
+  let down: { x: number; y: number; t: number } | null = null;
+  let pinned = false;
+  const pointOf = (ev: PointerEvent) => {
+    const r = renderer.domElement.getBoundingClientRect();
+    ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+  };
+  const anyPickable = () => layerOn.lights || layerOn.sprites || layerOn.sounds || layerOn.decals || layerOn.volumes;
+  const onPointerMove = (ev: PointerEvent) => {
+    if (mode === "fps" || ev.buttons !== 0) {
+      if (!pinned) hideTip();
+      return;
+    }
+    pointer = { x: ev.clientX, y: ev.clientY };
+    pointerDirty = true;
+  };
+  const onPointerLeave = () => {
+    pointer = null;
+    pointerDirty = false;
+    if (!pinned) hideTip();
+  };
+  const onPointerDown = (ev: PointerEvent) => {
+    down = { x: ev.clientX, y: ev.clientY, t: performance.now() };
+  };
+  const onPointerUp = (ev: PointerEvent) => {
+    const d = down;
+    down = null;
+    if (!d || mode === "fps" || !anyPickable()) return;
+    if (Math.hypot(ev.clientX - d.x, ev.clientY - d.y) > 5 || performance.now() - d.t > 600) return; // arrasto = órbita
+    pointOf(ev);
+    const hit = overlays.pick(raycaster);
+    pinned = false;
+    overlays.showRadius(null);
+    if (!hit) {
+      hideTip();
+      return;
+    }
+    if (hit.kind === "light" && hit.light?.switchable) {
+      const id = hit.light.style;
+      if (lightsOff.has(id)) lightsOff.delete(id);
+      else lightsOff.add(id);
+      forceTick();
+      overlays.invalidateLights();
+    }
+    if (hit.kind === "ambient" && hit.ambient) {
+      overlays.showRadius(hit.ambient);
+      pinned = true;
+    }
+    showTip(hit.info, ev.clientX, ev.clientY, pinned);
+  };
+  renderer.domElement.addEventListener("pointermove", onPointerMove);
+  renderer.domElement.addEventListener("pointerleave", onPointerLeave);
+  renderer.domElement.addEventListener("pointerdown", onPointerDown);
+  renderer.domElement.addEventListener("pointerup", onPointerUp);
 
   let statsListener: ((s: ViewerStats) => void) | null = null;
   let lastStats = 0;
@@ -399,6 +971,7 @@ export function mount3D(
   const animate = () => {
     raf = requestAnimationFrame(animate);
     const dt = Math.min(clock.getDelta(), 0.1);
+    animTime += dt;
     if (mode === "fps") {
       stepFps(dt);
     } else {
@@ -408,6 +981,24 @@ export function mount3D(
       ring.rotation.z += dt * 1.5;
       pin.position.y = 1.6 + Math.sin(performance.now() / 300) * 0.25;
     }
+    if (scrollEntries.length && layerOn.scroll && texturedOn) tickScroll();
+    if (animEntries.length && texturedOn) tickTextures();
+    if (styleUniforms) tickStyles();
+    if (fxEntries.length && texturedOn) tickFx();
+    if (layerOn.movers && nodes.size) {
+      moverTime += dt;
+      tickMovers();
+    }
+    overlays.update(animTime, styleDefs, layerOn.lightAnim, lightsOff);
+    if (pointerDirty && pointer && !pinned && anyPickable()) {
+      pointerDirty = false;
+      const r = renderer.domElement.getBoundingClientRect();
+      ndc.set(((pointer.x - r.left) / r.width) * 2 - 1, -((pointer.y - r.top) / r.height) * 2 + 1);
+      raycaster.setFromCamera(ndc, camera);
+      const hit = overlays.pick(raycaster);
+      if (hit) showTip(hit.info, pointer.x, pointer.y, false);
+      else hideTip();
+    }
     refreshPvs();
     renderer.render(scene, camera);
     const now = performance.now();
@@ -416,35 +1007,22 @@ export function mount3D(
       statsListener({ drawn: countDrawn(), total: totalTriangles, leaf: currentLeaf, pvsActive });
     }
   };
+  refreshMaterials();
   animate();
 
-  let texturedOn = opts.textured;
-  let lightmapsOn = true;
-  const refreshMaterials = () => {
-    for (const e of entries) {
-      e.mesh.material = texturedOn ? e.texMaterial : flatMaterial;
-      e.texMaterial.lightMap = lightmapsOn ? lightmapTex : null;
-      e.texMaterial.needsUpdate = true;
-    }
-  };
-  refreshMaterials();
-
-  const applyTransparent = (on: boolean) => {
-    for (const e of entries) {
-      const mat = e.texMaterial;
-      mat.transparent = on;
-      mat.depthWrite = !on;
-      mat.alphaTest = 0;
-      mat.needsUpdate = true;
-    }
-  };
+  const hasLightAnim = styleUniforms !== null;
+  const stat = (count: number, name: LayerName): LayerStat => ({ count, on: layerOn[name] });
+  const distinct = <T,>(xs: Iterable<T>) => new Set(xs).size;
 
   return {
     setTextured(on) {
       texturedOn = on;
       refreshMaterials();
     },
-    setTransparent: applyTransparent,
+    setTransparent(on) {
+      transparentOn = on;
+      refreshMaterials();
+    },
     setLightmaps(on) {
       lightmapsOn = on;
       refreshMaterials();
@@ -460,6 +1038,73 @@ export function mount3D(
     onStats(listener) {
       statsListener = listener;
     },
+
+    setLayer(name, on) {
+      layerOn[name] = on;
+      switch (name) {
+        case "renderModes":
+        case "texAnim":
+        case "texAlt":
+          refreshMaterials();
+          break;
+        case "scroll":
+          if (!on) resetScroll();
+          break;
+        case "lightAnim":
+          forceTick();
+          break;
+        case "movers":
+          if (!on) {
+            moverTime = 0;
+            resetMovers();
+          }
+          break;
+        case "fog":
+          setFog(on);
+          break;
+        case "sun":
+          setSun(on);
+          break;
+        case "sky":
+          sky.visible = on;
+          break;
+        default:
+          overlays.setVisible(name, on);
+          if (!on && !anyPickable()) {
+            hideTip();
+            pinned = false;
+          }
+      }
+    },
+    layers() {
+      return {
+        renderModes: stat(distinct(entries.filter((e) => e.render).map((e) => e.chunk.model)), "renderModes"),
+        scroll: stat(distinct(scrollEntries.map((e) => e.chunk.model)), "scroll"),
+        texAnim: stat(distinct(animEntries.map((e) => e.anim)), "texAnim"),
+        texAlt: stat(distinct(animEntries.filter((e) => e.anim!.alt.length > 1).map((e) => e.anim)), "texAlt"),
+        lightAnim: stat(hasLightAnim ? mesh.lightstyles.filter((s) => s.id !== 0).length : 0, "lightAnim"),
+        movers: stat(moverCount, "movers"),
+        fog: stat(fogEnt ? 1 : 0, "fog"),
+        sun: stat(sunEnt ? 1 : 0, "sun"),
+        sky: stat(1, "sky"),
+        lights: stat(overlays.counts.lights, "lights"),
+        sprites: stat(overlays.counts.sprites, "sprites"),
+        sounds: stat(overlays.counts.sounds, "sounds"),
+        decals: stat(overlays.counts.decals, "decals"),
+        routes: stat(overlays.counts.routes, "routes"),
+        volumes: stat(overlays.counts.volumes, "volumes"),
+      };
+    },
+    addHullWindow: (hull, win) => overlays.addHullWindow(hull, win),
+    clearHull: (hull) => overlays.clearHull(hull),
+    setHullVisible: (hull, on) => overlays.setHullVisible(hull, on),
+    setVolumes: (report) => overlays.setVolumes(report),
+    volumeCategories: () => overlays.volumeCategories(),
+    setVolumeCategory: (key, on) => overlays.setVolumeCategory(key, on),
+    volumesTruncated: () => overlays.volumesWereTruncated,
+    spriteModels: () => overlays.spriteModels(),
+    setSpriteInfo: (model, info) => overlays.setSpriteInfo(model, info),
+
     dispose() {
       cancelAnimationFrame(raf);
       ro.disconnect();
@@ -467,15 +1112,27 @@ export function mount3D(
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("keyup", onKeyUp);
+      renderer.domElement.removeEventListener("pointermove", onPointerMove);
+      renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      tip.remove();
       if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
       controls.dispose();
       for (const e of entries) {
-        scene.remove(e.mesh);
+        e.mesh.removeFromParent();
         e.mesh.geometry.dispose();
         e.texMaterial.dispose();
-        (e.texMaterial.map as THREE.Texture | null)?.dispose();
       }
-      lightmapTex?.dispose();
+      for (const n of nodes.values()) n.outer.removeFromParent();
+      for (const tx of owned) tx.dispose();
+      owned.length = 0;
+      overlays.dispose();
+      if (sunArrow) {
+        scene.remove(sunArrow);
+        sunArrow.dispose();
+        sunArrow = null;
+      }
       flatMaterial.dispose();
       scene.remove(sky);
       disposeSky(sky);
