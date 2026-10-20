@@ -9,28 +9,41 @@
 //!   `mstudiobone_t.value` (posição + ângulos de Euler fixos do arquivo). É a
 //!   geometria `positions` (espaço de mundo do modelo) que o mapa e o
 //!   visualizador desenham por padrão;
-//! - **animação** (`sequence_frames`): `mstudioseqdesc_t` (frames, fps, flags,
-//!   blends, offset) e os `mstudioanim_t` com os canais por bone comprimidos em
-//!   RLE (`mstudioanimvalue_t`), exatamente como `StudioCalcBonePosition` /
-//!   `StudioCalcBoneQuaternion` do `studio_render.cpp` do SDK. Cada quadro sai
-//!   como pose de mundo por bone (posição + quaternion), pronta pra skinning;
+//! - **animação** (`sequence_frames`/`sequence_frames_with`): `mstudioseqdesc_t`
+//!   (frames, fps, flags, blends, offset) e os `mstudioanim_t` com os canais por
+//!   bone comprimidos em RLE (`mstudioanimvalue_t`), exatamente como
+//!   `StudioCalcBonePosition` / `StudioCalcBoneQuaternion` do `StudioModelRenderer.cpp`
+//!   do SDK. Cada quadro sai como pose de mundo por bone (posição + quaternion),
+//!   pronta pra skinning. `SeqOptions` escolhe o valor dos **blenders** (mira/marcha:
+//!   2, 4 ou N blends) e dos **bone controllers** (olhar, mira, boca);
 //! - **skin por vértice**: cada vértice sai também em espaço local do bone
 //!   (`local_positions` + `vert_bones`), então o frontend pode skinnar na CPU;
-//! - **famílias de skin** (`skinref`): tabela família → textura.
+//! - **famílias de skin** (`skinref`): tabela família → textura;
+//! - **bodygroups**: `ParseOptions::body` escolhe um submodel por bodypart
+//!   (`(body / base) % nummodels`), e `extra.bodyparts` lista as opções;
+//! - **remap de cor de time** nas texturas `DM_Base*`/`Remap*` (`ParseOptions::top/bottom`);
+//! - **extras** (`extra.rs`): flags de material, hitboxes, attachments, eventos.
 //!
-//! Limites assumidos: só o *blend* 0 de cada sequência é decodificado (sem
-//! mistura de mira/marcha); controladores de bone (`bonecontroller`) não são
-//! aplicados; só o primeiro submodel de cada bodypart. Sequências em grupo
-//! externo (`seqgroup` > 0, arquivos `nome01.mdl`) só animam se o chamador
-//! entregar esse arquivo (`sequence_frames` recebe um resolvedor).
+//! Texturas externas (`nomeT.mdl`, quando o arquivo principal tem `numtextures == 0`)
+//! entram por `parse_with(.., Some(bytes_do_T))`; grupos de sequência (`nome01.mdl`)
+//! pelo resolvedor de `sequence_frames_with`. `files.rs` resolve os dois pelo disco.
 //!
-//! Referências: `studiohdr_t`/`mstudiobone_t`/`mstudiotexture_t`/`mstudiomodel_t`/
-//! `mstudiomesh_t`/`mstudioseqdesc_t`/`mstudioanim_t` de `studio.h` do SDK do
-//! Half-Life (layout público, replicado em várias engines/loaders
-//! GoldSrc-compatíveis). A rotação por bone segue `AngleQuaternion` do SDK
-//! (ângulos X/Y/Z = roll/pitch/yaw, equivalente a Rz·Ry·Rx) e a composição
-//! hierárquica é `pai · filho` (`ConcatTransforms`). Não há `.mdl` real no
-//! repositório: a conferência é feita nos testes com arquivos sintéticos.
+//! Limites assumidos: blends além de 2/4 (ex.: as 9 sequências de mira do jogador)
+//! não existem no motor aberto (SDK e Xash3D só tratam 1, 2 e 4); a interpolação
+//! de 9 blends daqui (grade 3x3 ou eixo único) é uma extensão **não conferida**
+//! contra o `hw.dll`. Pivôs (`numpivots`), `automove` e `nodes` de transição não são lidos.
+//!
+//! Referências: `studio.h`, `cl_dll/StudioModelRenderer.cpp` e `dlls/animation.cpp`
+//! do SDK do Half-Life (`ValveSoftware/halflife`, conferidos neste ciclo). A rotação
+//! por bone segue `AngleQuaternion` do SDK (ângulos X/Y/Z = roll/pitch/yaw,
+//! equivalente a Rz·Ry·Rx) e a composição hierárquica é `pai · filho`
+//! (`ConcatTransforms`). Não há `.mdl` real no repositório: a conferência é feita
+//! nos testes com arquivos sintéticos.
+
+pub mod extra;
+pub mod files;
+
+pub use extra::*;
 
 use crate::bsp::palette;
 use crate::bsp::reader::Cursor;
@@ -47,10 +60,13 @@ const BONE_SIZE: usize = 112; // name[32] + parent(4) + flags(4) + bonecontrolle
 const TEXTURE_SIZE: usize = 80; // name[64] + flags(4) + width(4) + height(4) + index(4)
 const BODYPART_SIZE: usize = 76; // name[64] + nummodels(4) + base(4) + modelindex(4)
 const MODEL_SIZE: usize = 112; // ver `read_submodel`
+const CONTROLLER_SIZE: usize = 24; // bone(4) + type(4) + start(4) + end(4) + rest(4) + index(4)
+const HITBOX_SIZE: usize = 32; // bone(4) + group(4) + bbmin(12) + bbmax(12)
+const ATTACHMENT_SIZE: usize = 88; // name[32] + type(4) + bone(4) + org(12) + vectors[3](36)
+const EVENT_SIZE: usize = 76; // frame(4) + event(4) + type(4) + options[64]
 const MESH_SIZE: usize = 20; // numtris(4) + triindex(4) + skinref(4) + numnorms(4) + normindex(4)
 const SEQDESC_SIZE: usize = 176;
 const ANIM_SIZE: usize = 12; // mstudioanim_t: unsigned short offset[6]
-const STUDIO_NF_MASKED: i32 = 0x0040;
 const STUDIO_LOOPING: i32 = 0x0001;
 /// `motiontype` da sequência: o bone `motionbone` tem a translação zerada nesses
 /// eixos (o movimento é aplicado pela entidade, não pelo desenho do modelo).
@@ -129,6 +145,44 @@ pub struct SeqFrames {
     pub fps: f32,
     pub looping: bool,
     pub data: Vec<f32>,
+    /// origem de cada attachment em espaço do modelo, por quadro:
+    /// `frames * attachments * 3` floats (`x,y,z`, attachment-major dentro do quadro)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<f32>,
+    /// caixas de acerto em espaço do modelo, por quadro, só com `SeqOptions::hitboxes`:
+    /// `frames * hitboxes * HITBOX_STRIDE` floats (centro 3, meias-arestas 3, quaternion xyzw 4)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hitboxes: Vec<f32>,
+}
+
+/// Floats por hitbox por quadro em `SeqFrames::hitboxes`.
+pub const HITBOX_STRIDE: usize = 10;
+
+/// Parâmetros de pose de `sequence_frames_with`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SeqOptions {
+    /// valores dos blenders 0 e 1 (0..255; ver `SeqDetail::blend_byte` para converter
+    /// de graus). Em sequência com um só blend não faz efeito.
+    pub blend: [u8; 2],
+    /// bytes dos controladores 0..3 e da boca (índice 4). `None` não aplica
+    /// controladores (equivale a ajuste zero em todos os canais, o comportamento
+    /// antigo); `Some` aplica `StudioCalcBoneAdj` com esses bytes — o repouso de
+    /// cada controlador está em `ControllerInfo::rest`.
+    pub controllers: Option<[u8; 5]>,
+    /// calcula também as caixas de acerto por quadro (aumenta o JSON)
+    pub hitboxes: bool,
+}
+
+/// Opções de `parse_with`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ParseOptions {
+    /// valor de `body` (um submodel por bodypart); 0 = primeiro de cada
+    pub body: u32,
+    /// família de skin (fora da faixa vale 0, como o SDK)
+    pub skin: u32,
+    /// cores de time 0..255 (matiz) para as texturas de remap; `None` = como no arquivo
+    pub top: Option<u8>,
+    pub bottom: Option<u8>,
 }
 
 /// Malha do modelo já triangulada e em espaço de mundo (pose de repouso) —
@@ -152,6 +206,8 @@ pub struct MdlModel {
     /// por família de skin: textura que substitui cada textura da família 0
     /// (índice = textura base; identidade na família 0). Sempre ao menos 1.
     pub skin_families: Vec<Vec<u32>>,
+    /// metadados além da malha (controladores, bodygroups, materiais, hitboxes...)
+    pub extra: MdlExtra,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -218,6 +274,44 @@ fn quat_mul(a: &[f32; 4], b: &[f32; 4]) -> [f32; 4] {
     ]
 }
 
+/// `QuaternionSlerp` do SDK (`mathlib`): escolhe o caminho mais curto e cai em
+/// lerp quando os quaternions são quase iguais.
+fn quat_slerp(p: &[f32; 4], q_in: &[f32; 4], t: f32) -> [f32; 4] {
+    let (mut a, mut b) = (0.0f32, 0.0f32);
+    for i in 0..4 {
+        a += (p[i] - q_in[i]) * (p[i] - q_in[i]);
+        b += (p[i] + q_in[i]) * (p[i] + q_in[i]);
+    }
+    let q = if a > b { q_in.map(|v| -v) } else { *q_in };
+    let cosom = p[0] * q[0] + p[1] * q[1] + p[2] * q[2] + p[3] * q[3];
+    if 1.0 + cosom > 0.000_000_01 {
+        let (sclp, sclq) = if 1.0 - cosom > 0.000_000_01 {
+            let omega = cosom.clamp(-1.0, 1.0).acos();
+            let sinom = omega.sin();
+            (((1.0 - t) * omega).sin() / sinom, (t * omega).sin() / sinom)
+        } else {
+            (1.0 - t, t)
+        };
+        [0, 1, 2, 3].map(|i| sclp * p[i] + sclq * q[i])
+    } else {
+        // quase antípodas (inalcançável após a inversão acima, mas o SDK tem o ramo)
+        let qt = [-q[1], q[0], -q[3], q[2]];
+        let sclp = ((1.0 - t) * (0.5 * std::f32::consts::PI)).sin();
+        let sclq = (t * (0.5 * std::f32::consts::PI)).sin();
+        [0, 1, 2, 3].map(|i| sclp * p[i] + sclq * qt[i])
+    }
+}
+
+/// `StudioSlerpBones` de um bone: `t` limitado a 0..1; posição em lerp, rotação em slerp.
+fn transform_blend(a: &Transform, b: &Transform, t: f32) -> Transform {
+    let t = t.clamp(0.0, 1.0);
+    let s1 = 1.0 - t;
+    Transform {
+        q: quat_slerp(&a.q, &b.q, t),
+        pos: [a.pos[0] * s1 + b.pos[0] * t, a.pos[1] * s1 + b.pos[1] * t, a.pos[2] * s1 + b.pos[2] * t],
+    }
+}
+
 fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
@@ -242,11 +336,14 @@ pub fn entity_transform(origin: [f32; 3], angles: [f32; 3]) -> impl Fn([f32; 3])
 }
 
 struct Bone {
+    name: String,
     parent: i32,
     /// `value[0..3]` = posição, `value[3..6]` = ângulos (rad) do repouso
     value: [f32; 6],
     /// escala dos canais animados (`valor RLE x scale + value`)
     scale: [f32; 6],
+    /// por canal (X,Y,Z,XR,YR,ZR): índice na tabela de bone controllers, -1 = nenhum
+    controller: [i32; 6],
 }
 
 impl Bone {
@@ -260,6 +357,10 @@ impl Bone {
 struct Header {
     num_bones: usize,
     bone_index: usize,
+    num_controllers: usize,
+    controller_index: usize,
+    num_hitboxes: usize,
+    hitbox_index: usize,
     num_seq: usize,
     seq_index: usize,
     num_textures: usize,
@@ -269,6 +370,8 @@ struct Header {
     skin_index: usize,
     num_bodyparts: usize,
     bodypart_index: usize,
+    num_attachments: usize,
+    attachment_index: usize,
 }
 
 /// i32 do arquivo -> contagem/offset; negativo é corrupção (e `as usize` viraria
@@ -297,11 +400,13 @@ fn read_header(data: &[u8]) -> Result<Header> {
 
     let num_bones = count(cur.i32().map_err(cursor_err)?, "numbones")?;
     let bone_index = count(cur.i32().map_err(cursor_err)?, "boneindex")?;
-    cur.skip(4 * 2).map_err(cursor_err)?; // numbonecontrollers, bonecontrollerindex
-    cur.skip(4 * 2).map_err(cursor_err)?; // numhitboxes, hitboxindex
+    let num_controllers = count(cur.i32().map_err(cursor_err)?, "numbonecontrollers")?;
+    let controller_index = count(cur.i32().map_err(cursor_err)?, "bonecontrollerindex")?;
+    let num_hitboxes = count(cur.i32().map_err(cursor_err)?, "numhitboxes")?;
+    let hitbox_index = count(cur.i32().map_err(cursor_err)?, "hitboxindex")?;
     let num_seq = count(cur.i32().map_err(cursor_err)?, "numseq")?;
     let seq_index = count(cur.i32().map_err(cursor_err)?, "seqindex")?;
-    cur.skip(4 * 2).map_err(cursor_err)?; // numseqgroups, seqgroupindex
+    cur.skip(4 * 2).map_err(cursor_err)?; // numseqgroups, seqgroupindex — o nome do arquivo de grupo segue a convenção nomeNN.mdl
 
     let num_textures = count(cur.i32().map_err(cursor_err)?, "numtextures")?;
     let texture_index = count(cur.i32().map_err(cursor_err)?, "textureindex")?;
@@ -312,10 +417,17 @@ fn read_header(data: &[u8]) -> Result<Header> {
 
     let num_bodyparts = count(cur.i32().map_err(cursor_err)?, "numbodyparts")?;
     let bodypart_index = count(cur.i32().map_err(cursor_err)?, "bodypartindex")?;
+    let num_attachments = count(cur.i32().map_err(cursor_err)?, "numattachments")?;
+    let attachment_index = count(cur.i32().map_err(cursor_err)?, "attachmentindex")?;
+    // soundtable..soundgroupindex e numtransitions/transitionindex (até 244 bytes) não são usados.
 
     Ok(Header {
         num_bones,
         bone_index,
+        num_controllers,
+        controller_index,
+        num_hitboxes,
+        hitbox_index,
         num_seq,
         seq_index,
         num_textures,
@@ -325,7 +437,15 @@ fn read_header(data: &[u8]) -> Result<Header> {
         skin_index,
         num_bodyparts,
         bodypart_index,
+        num_attachments,
+        attachment_index,
     })
+}
+
+/// O arquivo principal não tem texturas (`numtextures == 0`): elas vivem em
+/// `nomeT.mdl`. O chamador usa isto para saber se vale ler o arquivo irmão.
+pub fn needs_external_textures(data: &[u8]) -> bool {
+    read_header(data).map(|h| h.num_textures == 0).unwrap_or(false)
 }
 
 /// Decodifica um `.mdl` v10 completo: bones (pose de repouso), texturas (skins),
@@ -333,13 +453,59 @@ fn read_header(data: &[u8]) -> Result<Header> {
 /// bodyparts/meshes (em espaço de mundo e em espaço local do bone). A animação
 /// em si fica em `sequence_frames`, sob demanda.
 pub fn parse(data: &[u8]) -> Result<MdlModel> {
+    parse_with(data, None, &ParseOptions::default())
+}
+
+/// `parse` com bodygroup/skin/cores de time e textura externa. `tex_file` é o
+/// conteúdo de `nomeT.mdl` e só é usado se `data` não tiver texturas próprias
+/// (o motor copia textura **e** tabela de skins do arquivo T, como em
+/// `Mod_LoadStudioModel` do Xash3D). Um T ilegível vira aviso em `extra.warnings`.
+pub fn parse_with(data: &[u8], tex_file: Option<&[u8]>, opts: &ParseOptions) -> Result<MdlModel> {
     let h = read_header(data)?;
     let bones = read_bones(data, h.bone_index, h.num_bones)?;
     let bind: Vec<Transform> = bones.iter().map(Bone::bind_local).collect();
     let world_bones = world_transforms(&bones, &bind)?;
-    let textures = read_textures(data, h.texture_index, h.num_textures)?;
+    let mut warnings: Vec<String> = Vec::new();
+
+    let mut ext: Option<(&[u8], Header)> = None;
+    if h.num_textures == 0 {
+        if let Some(t) = tex_file {
+            match read_header(t) {
+                Ok(th) => ext = Some((t, th)),
+                Err(e) => warnings.push(format!("nomeT.mdl ignorado: {e}")),
+            }
+        }
+    }
+    let (tex_data, th): (&[u8], &Header) = match &ext {
+        Some((t, th)) => (*t, th),
+        None => (data, &h),
+    };
+
+    let (textures, texture_info) = read_textures(tex_data, th.texture_index, th.num_textures, opts.top, opts.bottom)?;
     let descs = read_seqdescs(data, h.seq_index, h.num_seq)?;
-    let (slot_to_tex, skin_families) = read_skin_families(data, &h, textures.len())?;
+    let (slot_base, skin_families) = read_skin_families(tex_data, th, textures.len())?;
+    // Como o SDK: skin fora de 1..numskinfamilies-1 vale 0.
+    let skin = if opts.skin > 0 && (opts.skin as usize) < skin_families.len() { opts.skin as usize } else { 0 };
+    let slot_to_tex: Vec<u32> =
+        slot_base.iter().map(|&b| skin_families[skin].get(b as usize).copied().unwrap_or(b)).collect();
+
+    let controllers = lenient(read_controllers(data, &h), "bone controllers", &mut warnings);
+    let hitboxes = lenient(read_hitboxes(data, &h, &world_bones), "hitboxes", &mut warnings);
+    let attachments = lenient(read_attachments(data, &h, &world_bones), "attachments", &mut warnings);
+    let mut bad_events = 0usize;
+    let seq_details: Vec<SeqDetail> = descs
+        .iter()
+        .map(|d| {
+            let events = read_events(data, d).unwrap_or_else(|_| {
+                bad_events += 1;
+                Vec::new()
+            });
+            SeqDetail { events, ..d.detail.clone() }
+        })
+        .collect();
+    if bad_events > 0 {
+        warnings.push(format!("eventos ilegíveis em {bad_events} sequência(s)"));
+    }
 
     let mut model = MdlModel {
         textures,
@@ -349,8 +515,28 @@ pub fn parse(data: &[u8]) -> Result<MdlModel> {
         skin_families,
         ..Default::default()
     };
-    read_bodyparts(data, h.bodypart_index, h.num_bodyparts, &world_bones, &slot_to_tex, &mut model)?;
+    let bodyparts = read_bodyparts(data, h.bodypart_index, h.num_bodyparts, &world_bones, &slot_to_tex, opts.body, &mut model)?;
+    model.extra = MdlExtra {
+        bone_info: bones.iter().map(|b| BoneInfo { name: b.name.clone(), parent: b.parent }).collect(),
+        controllers,
+        bodyparts,
+        texture_info,
+        hitboxes,
+        attachments,
+        seq_details,
+        selection: Selection { body: opts.body, skin: skin as u32, top: opts.top, bottom: opts.bottom },
+        external_textures: ext.is_some(),
+        warnings,
+    };
     Ok(model)
+}
+
+/// Tabela opcional ilegível vira vazia + aviso (não derruba a malha inteira).
+fn lenient<T: Default>(r: Result<T>, what: &str, warnings: &mut Vec<String>) -> T {
+    r.unwrap_or_else(|e| {
+        warnings.push(format!("{what} ignorados: {e}"));
+        T::default()
+    })
 }
 
 /// Fatia `data[offset..offset+len]`, com tudo checado (offset/len vêm do arquivo).
@@ -379,15 +565,22 @@ fn le_f32(b: &[u8], at: usize) -> f32 {
     f32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
 }
 
+fn le_vec3(b: &[u8], at: usize) -> [f32; 3] {
+    [le_f32(b, at), le_f32(b, at + 4), le_f32(b, at + 8)]
+}
+
 fn read_bones(data: &[u8], index: usize, num: usize) -> Result<Vec<Bone>> {
     let rows = table(data, index, num, BONE_SIZE)?; // antes do with_capacity: `num` pode ser absurdo
     let mut out = Vec::with_capacity(num);
     for (i, entry) in rows.enumerate() {
         // name[32], parent, flags, bonecontroller[6] = 32+4+4+24 = 64 -> value[6], scale[6]
+        let name = Cursor::new(entry).fixed_str(32).map_err(cursor_err)?;
         let parent = le_i32(entry, 32);
         let mut value = [0.0f32; 6];
         let mut scale = [0.0f32; 6];
+        let mut controller = [-1i32; 6];
         for j in 0..6 {
+            controller[j] = le_i32(entry, 40 + j * 4);
             value[j] = le_f32(entry, 64 + j * 4);
             scale[j] = le_f32(entry, 88 + j * 4);
         }
@@ -395,7 +588,7 @@ fn read_bones(data: &[u8], index: usize, num: usize) -> Result<Vec<Bone>> {
         if parent >= 0 && parent as usize >= i {
             return Err(MdlError::Malformed(format!("bone {i} aponta pra um pai inválido ({parent})")));
         }
-        out.push(Bone { parent, value, scale });
+        out.push(Bone { name, parent, value, scale, controller });
     }
     Ok(out)
 }
@@ -421,9 +614,21 @@ fn world_transforms(bones: &[Bone], locals: &[Transform]) -> Result<Vec<Transfor
     Ok(world)
 }
 
-fn read_textures(data: &[u8], index: usize, num: usize) -> Result<Vec<MdlTexture>> {
+/// Pose do bone `bone` (índice do arquivo, possivelmente inválido): identidade se não existir.
+fn bone_pose(world: &[Transform], bone: i32) -> Transform {
+    usize::try_from(bone).ok().and_then(|b| world.get(b)).copied().unwrap_or_else(Transform::identity)
+}
+
+fn read_textures(
+    data: &[u8],
+    index: usize,
+    num: usize,
+    top: Option<u8>,
+    bottom: Option<u8>,
+) -> Result<(Vec<MdlTexture>, Vec<TextureInfo>)> {
     let rows = table(data, index, num, TEXTURE_SIZE)?;
     let mut out = Vec::with_capacity(num);
+    let mut infos = Vec::with_capacity(num);
     for entry in rows {
         let mut cur = Cursor::new(entry);
         let name = cur.fixed_str(64).map_err(cursor_err)?;
@@ -437,14 +642,28 @@ fn read_textures(data: &[u8], index: usize, num: usize) -> Result<Vec<MdlTexture
         let need = w.checked_mul(h).ok_or_else(|| MdlError::Malformed("textura absurdamente grande".into()))?;
         let pixels = slice_at(data, pixel_offset, need)?;
         let palette_bytes = slice_at(data, pixel_offset + need, 768)?;
-        let transparent = flags & STUDIO_NF_MASKED != 0;
-        let rgba = palette::decode_indexed(pixels, palette_bytes, transparent)
+        let transparent = flags & NF_MASKED != 0;
+        let info = TextureInfo::new(&name, flags);
+
+        // Remap de cor de time: só a paleta muda (a faixa de hue de cima/baixo).
+        let remapped;
+        let palette: &[u8] = match info.remap {
+            Some(range) if top.is_some() || bottom.is_some() => {
+                let mut p = palette_bytes.to_vec();
+                remap_palette(&mut p, range, top, bottom);
+                remapped = p;
+                &remapped
+            }
+            _ => palette_bytes,
+        };
+        let rgba = palette::decode_indexed(pixels, palette, transparent)
             .ok_or_else(|| MdlError::Malformed(format!("paleta inválida na skin {name}")))?;
         let png = crate::bsp::rgba_png(w, h, &rgba)
             .ok_or_else(|| MdlError::Malformed(format!("falha ao gerar PNG da skin {name}")))?;
         out.push(MdlTexture { name, png, width, height });
+        infos.push(info);
     }
-    Ok(out)
+    Ok((out, infos))
 }
 
 /// Tabela de skins: `short skinref[numskinfamilies][numskinref]`; a skin
@@ -487,11 +706,97 @@ fn read_skin_families(data: &[u8], h: &Header, num_textures: usize) -> Result<(V
     Ok((base, families))
 }
 
+/// `mstudiobonecontroller_t`: bone, tipo, faixa e byte de repouso de cada controlador.
+fn read_controllers(data: &[u8], h: &Header) -> Result<Vec<ControllerInfo>> {
+    let mut out = Vec::with_capacity(h.num_controllers.min(64));
+    for entry in table(data, h.controller_index, h.num_controllers, CONTROLLER_SIZE)? {
+        let raw_type = le_i32(entry, 4);
+        let index = le_i32(entry, 20);
+        let rotation = raw_type & T_TYPES & (T_XR | T_YR | T_ZR) != 0;
+        let mouth = index > 3;
+        out.push(ControllerInfo {
+            index,
+            name: if mouth { "mouth".to_string() } else { format!("controller{index}") },
+            bone: le_i32(entry, 0),
+            kind: type_kind(raw_type).to_string(),
+            wrap: raw_type & T_RLOOP != 0,
+            start: le_f32(entry, 8),
+            end: le_f32(entry, 12),
+            rest: le_i32(entry, 16),
+            input_max: if mouth { 64 } else { 255 },
+            unit: if rotation { "deg" } else { "units" }.to_string(),
+            raw_type,
+        });
+    }
+    Ok(out)
+}
+
+/// Ajuste (rad ou unidades) de cada controlador para os bytes de entrada
+/// (`StudioCalcBoneAdj`); índice inválido (< 0) fica em 0.
+fn controller_adjust(ctls: &[ControllerInfo], inputs: &[u8; 5]) -> Vec<f32> {
+    ctls.iter()
+        .map(|c| {
+            let slot = if c.is_mouth() { Some(4) } else { usize::try_from(c.index).ok() };
+            slot.and_then(|s| inputs.get(s)).map_or(0.0, |&b| c.adjust(b))
+        })
+        .collect()
+}
+
+/// Caixa de um hitbox (`bbmin`/`bbmax` no espaço do bone) em espaço do modelo.
+fn oriented_box(bbmin: [f32; 3], bbmax: [f32; 3], pose: &Transform) -> OrientedBox {
+    let mid = [(bbmin[0] + bbmax[0]) * 0.5, (bbmin[1] + bbmax[1]) * 0.5, (bbmin[2] + bbmax[2]) * 0.5];
+    OrientedBox {
+        center: pose.apply(mid),
+        half: [(bbmax[0] - bbmin[0]) * 0.5, (bbmax[1] - bbmin[1]) * 0.5, (bbmax[2] - bbmin[2]) * 0.5],
+        rot: pose.q,
+    }
+}
+
+/// `mstudiobbox_t` (hitboxes); `rest` na pose de repouso `world`.
+fn read_hitboxes(data: &[u8], h: &Header, world: &[Transform]) -> Result<Vec<HitboxInfo>> {
+    let mut out = Vec::with_capacity(h.num_hitboxes.min(256));
+    for entry in table(data, h.hitbox_index, h.num_hitboxes, HITBOX_SIZE)? {
+        let bone = le_i32(entry, 0);
+        let (bbmin, bbmax) = (le_vec3(entry, 8), le_vec3(entry, 20));
+        out.push(HitboxInfo {
+            bone,
+            group: le_i32(entry, 4),
+            bbmin,
+            bbmax,
+            rest: oriented_box(bbmin, bbmax, &bone_pose(world, bone)),
+        });
+    }
+    Ok(out)
+}
+
+/// `mstudioattachment_t`; `rest` na pose de repouso `world`.
+fn read_attachments(data: &[u8], h: &Header, world: &[Transform]) -> Result<Vec<AttachmentInfo>> {
+    let mut out = Vec::with_capacity(h.num_attachments.min(256));
+    for entry in table(data, h.attachment_index, h.num_attachments, ATTACHMENT_SIZE)? {
+        let name = Cursor::new(entry).fixed_str(32).map_err(cursor_err)?;
+        let bone = le_i32(entry, 36);
+        let org = le_vec3(entry, 40);
+        let vectors = [le_vec3(entry, 52), le_vec3(entry, 64), le_vec3(entry, 76)];
+        out.push(AttachmentInfo {
+            name,
+            kind: le_i32(entry, 32),
+            bone,
+            org,
+            vectors,
+            rest: bone_pose(world, bone).apply(org),
+        });
+    }
+    Ok(out)
+}
+
 /// Sequência lida do arquivo: o `SeqInfo` público + os campos de animação.
 struct SeqDesc {
     info: SeqInfo,
-    motion_type: i32,
-    motion_bone: i32,
+    /// detalhe sem os eventos (lidos à parte, de forma leniente)
+    detail: SeqDetail,
+    num_events: i32,
+    event_index: i32,
+    num_blends: usize,
     anim_index: usize,
 }
 
@@ -502,6 +807,8 @@ fn read_seqdescs(data: &[u8], index: usize, num: usize) -> Result<Vec<SeqDesc>> 
         let name = Cursor::new(entry).fixed_str(32).map_err(cursor_err)?;
         let fps = le_f32(entry, 32);
         let flags = le_i32(entry, 36);
+        let blend_type = [le_i32(entry, 128), le_i32(entry, 132)];
+        let num_blends = le_i32(entry, 120).max(0);
         out.push(SeqDesc {
             info: SeqInfo {
                 name,
@@ -509,13 +816,44 @@ fn read_seqdescs(data: &[u8], index: usize, num: usize) -> Result<Vec<SeqDesc>> 
                 fps: if fps.is_finite() && fps > 0.0 { fps.min(1000.0) } else { 30.0 },
                 frames: le_i32(entry, 56).max(0) as u32,
                 looping: flags & STUDIO_LOOPING != 0,
-                blends: le_i32(entry, 120).max(0) as u32,
+                blends: num_blends as u32,
                 group: le_i32(entry, 156).max(0) as u32,
             },
-            motion_type: le_i32(entry, 68),
-            motion_bone: le_i32(entry, 72),
+            detail: SeqDetail {
+                flags,
+                activity: le_i32(entry, 40),
+                act_weight: le_i32(entry, 44),
+                motion_type: le_i32(entry, 68),
+                motion_bone: le_i32(entry, 72),
+                linear_movement: le_vec3(entry, 76),
+                blend_type,
+                blend_axis: blend_type.map(|t| if t == 0 { String::new() } else { type_kind(t).to_string() }),
+                blend_start: [le_f32(entry, 136), le_f32(entry, 140)],
+                blend_end: [le_f32(entry, 144), le_f32(entry, 148)],
+                blend_parent: le_i32(entry, 152),
+                next_seq: le_i32(entry, 172),
+                events: Vec::new(),
+            },
+            num_events: le_i32(entry, 48),
+            event_index: le_i32(entry, 52),
+            num_blends: num_blends as usize,
             anim_index: count(le_i32(entry, 124), "animindex")?,
         });
+    }
+    Ok(out)
+}
+
+/// `mstudioevent_t` da sequência (no arquivo principal, mesmo em grupo externo).
+fn read_events(data: &[u8], desc: &SeqDesc) -> Result<Vec<SeqEvent>> {
+    let n = count(desc.num_events, "numevents")?;
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+    let at = count(desc.event_index, "eventindex")?;
+    let mut out = Vec::with_capacity(n.min(256));
+    for entry in table(data, at, n, EVENT_SIZE)? {
+        let options = Cursor::new(&entry[12..]).fixed_str(64).map_err(cursor_err)?;
+        out.push(SeqEvent::new(le_i32(entry, 0), le_i32(entry, 4), le_i32(entry, 8), options));
     }
     Ok(out)
 }
@@ -549,10 +887,134 @@ fn rle_value(buf: &[u8], start: usize, frame: usize) -> Result<i16> {
     }
 }
 
-/// Quadros de uma sequência como pose de mundo por bone (blend 0).
+/// Como combinar os blends de uma sequência (árvore de misturas).
+///
+/// - 1 blend: o blend 0.
+/// - 2 blends: mistura 0/1 por `blend[0]/255` (`StudioSetupBones`, SDK e Xash3D).
+/// - 4 blends: grade 2x2 do SDK — 0/1 e 2/3 por `blend[0]`, os resultados por `blend[1]`.
+/// - outros N (ex.: as 9 sequências de mira/marcha do jogador): **extensão deste
+///   projeto, não conferida contra o motor** (o SDK e o Xash3D só tratam 1, 2 e 4).
+///   Com o segundo blender ativo (`blendtype[1] != 0`) e N quadrado, grade k x k
+///   (linha = `blend[1]`, coluna = `blend[0]`); senão um eixo único de N amostras
+///   percorrido por `blend[0]`.
+enum Plan {
+    Leaf(usize),
+    Mix(Box<Plan>, Box<Plan>, f32),
+}
+
+impl Plan {
+    fn leaf(i: usize) -> Box<Plan> {
+        Box::new(Plan::Leaf(i))
+    }
+
+    fn new(n: usize, second_axis: bool, blend: [u8; 2]) -> Plan {
+        let (s0, s1) = (f32::from(blend[0]) / 255.0, f32::from(blend[1]) / 255.0);
+        match n {
+            0 | 1 => Plan::Leaf(0),
+            2 => Plan::Mix(Plan::leaf(0), Plan::leaf(1), s0),
+            4 => Plan::Mix(
+                Box::new(Plan::Mix(Plan::leaf(0), Plan::leaf(1), s0)),
+                Box::new(Plan::Mix(Plan::leaf(2), Plan::leaf(3), s0)),
+                s1,
+            ),
+            _ => {
+                let k = (n as f64).sqrt().round() as usize;
+                // posição fracionária em [0, len-1]: (célula, fração)
+                let cell = |s: f32, len: usize| {
+                    let u = s * (len - 1) as f32;
+                    let c = (u.floor().max(0.0) as usize).min(len - 2);
+                    (c, (u - c as f32).clamp(0.0, 1.0))
+                };
+                if second_axis && k >= 2 && k * k == n {
+                    let (c, fc) = cell(s0, k);
+                    let (r, fr) = cell(s1, k);
+                    let row = |r: usize| Box::new(Plan::Mix(Plan::leaf(r * k + c), Plan::leaf(r * k + c + 1), fc));
+                    Plan::Mix(row(r), row(r + 1), fr)
+                } else {
+                    let (c, fc) = cell(s0, n);
+                    Plan::Mix(Plan::leaf(c), Plan::leaf(c + 1), fc)
+                }
+            }
+        }
+    }
+
+    fn leaves(&self, out: &mut Vec<usize>) {
+        match self {
+            Plan::Leaf(i) => {
+                if !out.contains(i) {
+                    out.push(*i);
+                }
+            }
+            Plan::Mix(a, b, _) => {
+                a.leaves(out);
+                b.leaves(out);
+            }
+        }
+    }
+
+    /// `locals[i]` = poses locais do blend `leaves[i]`.
+    fn eval(&self, locals: &[Vec<Transform>], leaves: &[usize]) -> Vec<Transform> {
+        match self {
+            Plan::Leaf(i) => leaves.iter().position(|l| l == i).and_then(|p| locals.get(p)).cloned().unwrap_or_default(),
+            Plan::Mix(a, b, t) => {
+                let (pa, pb) = (a.eval(locals, leaves), b.eval(locals, leaves));
+                pa.iter().zip(&pb).map(|(x, y)| transform_blend(x, y, *t)).collect()
+            }
+        }
+    }
+}
+
+/// Poses locais de todos os bones de um blend, no quadro `frame`. `adj` = ajuste
+/// dos bone controllers (`StudioCalcBoneAdj`), somado ao canal que o bone liga
+/// ao controlador (`bonecontroller[canal]`).
+fn blend_locals(
+    bones: &[Bone],
+    table_bytes: &[u8],
+    base: usize,
+    buf: &[u8],
+    frame: usize,
+    adj: Option<&[f32]>,
+) -> Result<Vec<Transform>> {
+    let mut locals = Vec::with_capacity(bones.len());
+    for (i, (bone, entry)) in bones.iter().zip(table_bytes.chunks_exact(ANIM_SIZE)).enumerate() {
+        let at = base + i * ANIM_SIZE;
+        let mut ch = [0.0f32; 6];
+        for (j, slot) in ch.iter_mut().enumerate() {
+            let offset = u16::from_le_bytes([entry[j * 2], entry[j * 2 + 1]]) as usize;
+            *slot = if offset == 0 {
+                bone.value[j]
+            } else {
+                bone.value[j] + rle_value(buf, at + offset, frame)? as f32 * bone.scale[j]
+            };
+            if let Some(a) = adj.and_then(|a| usize::try_from(bone.controller[j]).ok().and_then(|c| a.get(c))) {
+                *slot += *a;
+            }
+        }
+        locals.push(Transform::from_euler([ch[0], ch[1], ch[2]], [ch[3], ch[4], ch[5]]));
+    }
+    Ok(locals)
+}
+
+/// Quadros de uma sequência como pose de mundo por bone (blend 0, sem controladores).
 /// `external(grupo)` entrega o arquivo `nome0N.mdl` das sequências com
 /// `seqgroup` > 0; sem ele (`None`) essas sequências dão erro.
 pub fn sequence_frames(data: &[u8], seq: usize, external: &dyn Fn(u32) -> Option<Vec<u8>>) -> Result<SeqFrames> {
+    sequence_frames_with(data, seq, external, &SeqOptions::default())
+}
+
+/// `sequence_frames` com blenders, bone controllers e caixas de acerto (`SeqOptions`).
+///
+/// Cada blend é calculado como em `StudioCalcRotations` (canais RLE + controladores,
+/// quaternion por `AngleQuaternion`), depois misturados (`Plan`) e só então a
+/// hierarquia é composta. O `motiontype` `STUDIO_X/Y/Z` zera a translação do
+/// `motionbone` (conferido em `StudioCalcRotations` do SDK); `STUDIO_LX/LY/LZ`
+/// somam `s * linearmovement`, mas o SDK define `s = 0 * ...`, ou seja, não fazem nada.
+pub fn sequence_frames_with(
+    data: &[u8],
+    seq: usize,
+    external: &dyn Fn(u32) -> Option<Vec<u8>>,
+    opts: &SeqOptions,
+) -> Result<SeqFrames> {
     let h = read_header(data)?;
     let bones = read_bones(data, h.bone_index, h.num_bones)?;
     let descs = read_seqdescs(data, h.seq_index, h.num_seq)?;
@@ -586,68 +1048,120 @@ pub fn sequence_frames(data: &[u8], seq: usize, external: &dyn Fn(u32) -> Option
         return Err(MdlError::Malformed(format!("sequência grande demais ({frames} quadros x {nb} bones)")));
     }
 
-    // mstudioanim_t de cada bone no blend 0: 6 x u16 (X,Y,Z, rotX,rotY,rotZ),
-    // offsets relativos ao início do próprio mstudioanim_t; 0 = canal fixo.
-    let anim_table = slice_at(buf, desc.anim_index, nb * ANIM_SIZE)?;
+    let bind: Vec<Transform> = bones.iter().map(Bone::bind_local).collect();
+    let bind_world = world_transforms(&bones, &bind)?;
+    let adj: Option<Vec<f32>> = opts
+        .controllers
+        .map(|inputs| controller_adjust(&read_controllers(data, &h).unwrap_or_default(), &inputs));
+    // Attachments e hitboxes são opcionais: tabela ilegível = sem eles.
+    let attachments = read_attachments(data, &h, &bind_world).unwrap_or_default();
+    let hitboxes = if opts.hitboxes { read_hitboxes(data, &h, &bind_world).unwrap_or_default() } else { Vec::new() };
+    if frames.saturating_mul(hitboxes.len()).saturating_mul(HITBOX_STRIDE) > MAX_FRAME_FLOATS {
+        return Err(MdlError::Malformed(format!("hitboxes demais ({}) para {frames} quadros", hitboxes.len())));
+    }
+    if frames.saturating_mul(attachments.len()).saturating_mul(3) > MAX_FRAME_FLOATS {
+        return Err(MdlError::Malformed(format!("attachments demais ({}) para {frames} quadros", attachments.len())));
+    }
+
+    // mstudioanim_t de cada bone em cada blend usado: [blend][bone] x 6 u16 (X,Y,Z,
+    // rotX,rotY,rotZ), offsets relativos ao início do próprio mstudioanim_t; 0 = canal fixo.
+    let plan = Plan::new(desc.num_blends, desc.detail.blend_type[1] != 0, opts.blend);
+    let mut leaves = Vec::new();
+    plan.leaves(&mut leaves);
+    let mut tables: Vec<(&[u8], usize)> = Vec::with_capacity(leaves.len());
+    for &b in &leaves {
+        let base = b
+            .checked_mul(nb)
+            .and_then(|v| v.checked_mul(ANIM_SIZE))
+            .and_then(|v| v.checked_add(desc.anim_index))
+            .ok_or_else(|| MdlError::Malformed("offset de blend estoura usize".into()))?;
+        tables.push((slice_at(buf, base, nb * ANIM_SIZE)?, base));
+    }
+
+    let motion_bone = usize::try_from(desc.detail.motion_bone).ok();
+    let motion = desc.detail.motion_type;
     let mut out = Vec::with_capacity(floats);
+    let mut att_out = Vec::with_capacity(frames * attachments.len() * 3);
+    let mut hit_out = Vec::with_capacity(frames * hitboxes.len() * HITBOX_STRIDE);
     for frame in 0..frames {
-        let mut locals = Vec::with_capacity(nb);
-        for (i, (bone, entry)) in bones.iter().zip(anim_table.chunks_exact(ANIM_SIZE)).enumerate() {
-            let base = desc.anim_index + i * ANIM_SIZE;
-            let mut ch = [0.0f32; 6];
-            for (j, slot) in ch.iter_mut().enumerate() {
-                let offset = u16::from_le_bytes([entry[j * 2], entry[j * 2 + 1]]) as usize;
-                *slot = if offset == 0 {
-                    bone.value[j]
-                } else {
-                    bone.value[j] + rle_value(buf, base + offset, frame)? as f32 * bone.scale[j]
-                };
-            }
-            locals.push(Transform::from_euler([ch[0], ch[1], ch[2]], [ch[3], ch[4], ch[5]]));
-        }
+        let per_blend = tables
+            .iter()
+            .map(|&(bytes, base)| blend_locals(&bones, bytes, base, buf, frame, adj.as_deref()))
+            .collect::<Result<Vec<_>>>()?;
+        let mut locals = plan.eval(&per_blend, &leaves);
         // O movimento do bone raiz (andar/correr) é do jogo, não do desenho.
-        if let Some(m) = usize::try_from(desc.motion_bone).ok().and_then(|m| locals.get_mut(m)) {
-            if desc.motion_type & STUDIO_X != 0 {
+        if let Some(m) = motion_bone.and_then(|m| locals.get_mut(m)) {
+            if motion & STUDIO_X != 0 {
                 m.pos[0] = 0.0;
             }
-            if desc.motion_type & STUDIO_Y != 0 {
+            if motion & STUDIO_Y != 0 {
                 m.pos[1] = 0.0;
             }
-            if desc.motion_type & STUDIO_Z != 0 {
+            if motion & STUDIO_Z != 0 {
                 m.pos[2] = 0.0;
             }
         }
-        for t in world_transforms(&bones, &locals)? {
+        let world = world_transforms(&bones, &locals)?;
+        for t in &world {
             out.extend_from_slice(&t.pos);
             out.extend_from_slice(&t.q);
         }
+        for a in &attachments {
+            att_out.extend_from_slice(&bone_pose(&world, a.bone).apply(a.org));
+        }
+        for hb in &hitboxes {
+            let b = oriented_box(hb.bbmin, hb.bbmax, &bone_pose(&world, hb.bone));
+            hit_out.extend_from_slice(&b.center);
+            hit_out.extend_from_slice(&b.half);
+            hit_out.extend_from_slice(&b.rot);
+        }
     }
-    Ok(SeqFrames { frames: frames as u32, bones: nb as u32, fps: desc.info.fps, looping: desc.info.looping, data: out })
+    Ok(SeqFrames {
+        frames: frames as u32,
+        bones: nb as u32,
+        fps: desc.info.fps,
+        looping: desc.info.looping,
+        data: out,
+        attachments: att_out,
+        hitboxes: hit_out,
+    })
 }
 
+/// Lê os bodyparts: para cada um, escolhe o submodel de `body`
+/// (`(body / base) % nummodels`) e acumula a malha dele em `model`. Devolve a
+/// lista de opções (nome do bodypart, `base`, nome de cada submodel).
 fn read_bodyparts(
     data: &[u8],
     index: usize,
     num: usize,
     world_bones: &[Transform],
     slot_to_tex: &[u32],
+    body: u32,
     model: &mut MdlModel,
-) -> Result<()> {
+) -> Result<Vec<BodyPartInfo>> {
+    let mut infos = Vec::with_capacity(num.min(64));
     for entry in table(data, index, num, BODYPART_SIZE)? {
         let mut cur = Cursor::new(entry);
-        cur.skip(64).map_err(cursor_err)?; // name
+        let name = cur.fixed_str(64).map_err(cursor_err)?;
         let num_models = cur.i32().map_err(cursor_err)?;
-        cur.skip(4).map_err(cursor_err)?; // base
+        let base = cur.i32().map_err(cursor_err)?;
         let model_index = count(cur.i32().map_err(cursor_err)?, "modelindex")?;
 
-        // Só o primeiro submodel de cada bodypart (índice de bodygroup 0) —
-        // variantes (ex.: cabeça com/sem gorro) ficam de fora nesta versão.
-        if num_models <= 0 {
-            continue;
+        let n = usize::try_from(num_models).unwrap_or(0);
+        let mut names = Vec::new();
+        if n > 0 {
+            for sub in table(data, model_index, n, MODEL_SIZE)? {
+                names.push(Cursor::new(sub).fixed_str(64).map_err(cursor_err)?);
+            }
         }
-        read_submodel(data, model_index, world_bones, slot_to_tex, model)?;
+        let info = BodyPartInfo { name, base, models: names };
+        if n > 0 {
+            let chosen = info.choice(body);
+            read_submodel(data, model_index + chosen * MODEL_SIZE, world_bones, slot_to_tex, model)?;
+        }
+        infos.push(info);
     }
-    Ok(())
+    Ok(infos)
 }
 
 fn read_submodel(
@@ -691,7 +1205,7 @@ fn read_submodel(
         let tri_index = count(cur_m.i32().map_err(cursor_err)?, "triindex")?;
         let skin_ref = count(cur_m.i32().map_err(cursor_err)?, "skinref")?;
 
-        // skinref do mesh -> textura da família 0 (nem sempre é a identidade).
+        // skinref do mesh -> textura da família escolhida (nem sempre é a identidade).
         let tex = slot_to_tex.get(skin_ref).copied().unwrap_or(skin_ref as u32);
         let (tex_w, tex_h) = model
             .textures
@@ -812,24 +1326,25 @@ pub(crate) fn synthetic_mdl() -> Vec<u8> {
     }
     out.extend_from_slice(&0i32.to_le_bytes()); // flags
     out.extend_from_slice(&1i32.to_le_bytes()); // numbones
-    out.extend_from_slice(&212i32.to_le_bytes()); // boneindex
+    out.extend_from_slice(&244i32.to_le_bytes()); // boneindex
     out.extend_from_slice(&0i32.to_le_bytes()); // numbonecontrollers
     out.extend_from_slice(&0i32.to_le_bytes()); // bonecontrollerindex
     out.extend_from_slice(&0i32.to_le_bytes()); // numhitboxes
     out.extend_from_slice(&0i32.to_le_bytes()); // hitboxindex
     out.extend_from_slice(&1i32.to_le_bytes()); // numseq
-    out.extend_from_slice(&1448i32.to_le_bytes()); // seqindex
+    out.extend_from_slice(&1480i32.to_le_bytes()); // seqindex
     out.extend_from_slice(&0i32.to_le_bytes()); // numseqgroups
     out.extend_from_slice(&0i32.to_le_bytes()); // seqgroupindex
     out.extend_from_slice(&1i32.to_le_bytes()); // numtextures
-    out.extend_from_slice(&324i32.to_le_bytes()); // textureindex
+    out.extend_from_slice(&356i32.to_le_bytes()); // textureindex
     out.extend_from_slice(&0i32.to_le_bytes()); // texturedataindex (não usado)
     out.extend_from_slice(&0i32.to_le_bytes()); // numskinref
     out.extend_from_slice(&0i32.to_le_bytes()); // numskinfamilies
     out.extend_from_slice(&0i32.to_le_bytes()); // skinindex
     out.extend_from_slice(&1i32.to_le_bytes()); // numbodyparts
-    out.extend_from_slice(&1173i32.to_le_bytes()); // bodypartindex
-    assert_eq!(out.len(), 212, "header do teste desalinhou");
+    out.extend_from_slice(&1205i32.to_le_bytes()); // bodypartindex
+    out.extend_from_slice(&[0u8; 4 * 8]); // numattachments..transitionindex (8 ints)
+    assert_eq!(out.len(), 244, "header do teste desalinhou");
 
     // ---- bone (só translação em X=10, sem rotação) ----
     push_str_fixed(&mut out, "root", 32);
@@ -841,45 +1356,45 @@ pub(crate) fn synthetic_mdl() -> Vec<u8> {
         out.extend_from_slice(&v.to_le_bytes());
     }
     out.extend_from_slice(&[0u8; 24]); // scale[6]
-    assert_eq!(out.len(), 324, "bone do teste desalinhou");
+    assert_eq!(out.len(), 356, "bone do teste desalinhou");
 
     // ---- textura (entry de 80 bytes; pixels ficam em outro offset) ----
     push_str_fixed(&mut out, "skin1", 64);
     out.extend_from_slice(&0i32.to_le_bytes()); // flags (sem STUDIO_NF_MASKED)
     out.extend_from_slice(&1u32.to_le_bytes()); // width
     out.extend_from_slice(&1u32.to_le_bytes()); // height
-    out.extend_from_slice(&404i32.to_le_bytes()); // offset do pixel
-    assert_eq!(out.len(), 404, "entrada de textura do teste desalinhou");
+    out.extend_from_slice(&436i32.to_le_bytes()); // offset do pixel
+    assert_eq!(out.len(), 436, "entrada de textura do teste desalinhou");
 
     // pixel (índice 5) + paleta de 256 cores (cor 5 = vermelho puro)
     out.push(5);
     let mut palette = vec![0u8; 768];
     palette[15..18].copy_from_slice(&[255, 0, 0]); // índice 5 = offset 15
     out.extend_from_slice(&palette);
-    assert_eq!(out.len(), 1173, "bloco de pixels do teste desalinhou");
+    assert_eq!(out.len(), 1205, "bloco de pixels do teste desalinhou");
 
     // ---- bodypart ----
     push_str_fixed(&mut out, "body", 64);
     out.extend_from_slice(&1i32.to_le_bytes()); // nummodels
     out.extend_from_slice(&0i32.to_le_bytes()); // base
-    out.extend_from_slice(&1249i32.to_le_bytes()); // modelindex
-    assert_eq!(out.len(), 1249, "bodypart do teste desalinhou");
+    out.extend_from_slice(&1281i32.to_le_bytes()); // modelindex
+    assert_eq!(out.len(), 1281, "bodypart do teste desalinhou");
 
     // ---- submodel ----
     push_str_fixed(&mut out, "sub", 64);
     out.extend_from_slice(&0i32.to_le_bytes()); // type
     out.extend_from_slice(&0f32.to_le_bytes()); // boundingradius
     out.extend_from_slice(&1i32.to_le_bytes()); // nummesh
-    out.extend_from_slice(&1400i32.to_le_bytes()); // meshindex
+    out.extend_from_slice(&1432i32.to_le_bytes()); // meshindex
     out.extend_from_slice(&3i32.to_le_bytes()); // numverts
-    out.extend_from_slice(&1361i32.to_le_bytes()); // vertinfoindex
-    out.extend_from_slice(&1364i32.to_le_bytes()); // vertindex
+    out.extend_from_slice(&1393i32.to_le_bytes()); // vertinfoindex
+    out.extend_from_slice(&1396i32.to_le_bytes()); // vertindex
     out.extend_from_slice(&[0u8; 112 - 64 - 4 - 4 - 4 - 4 - 4 - 4 - 4]); // resto do struct (numnorms..groupindex)
-    assert_eq!(out.len(), 1361, "submodel do teste desalinhou");
+    assert_eq!(out.len(), 1393, "submodel do teste desalinhou");
 
     // ---- vertinfo (bone por vértice) ----
     out.extend_from_slice(&[0u8, 0u8, 0u8]);
-    assert_eq!(out.len(), 1364, "vertinfo do teste desalinhou");
+    assert_eq!(out.len(), 1396, "vertinfo do teste desalinhou");
 
     // ---- vértices locais: (0,0,0) (1,0,0) (0,1,0) ----
     for v in [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
@@ -887,15 +1402,15 @@ pub(crate) fn synthetic_mdl() -> Vec<u8> {
             out.extend_from_slice(&c.to_le_bytes());
         }
     }
-    assert_eq!(out.len(), 1400, "vértices do teste desalinharam");
+    assert_eq!(out.len(), 1432, "vértices do teste desalinharam");
 
     // ---- mesh ----
     out.extend_from_slice(&1i32.to_le_bytes()); // numtris
-    out.extend_from_slice(&1420i32.to_le_bytes()); // triindex
+    out.extend_from_slice(&1452i32.to_le_bytes()); // triindex
     out.extend_from_slice(&0i32.to_le_bytes()); // skinref
     out.extend_from_slice(&0i32.to_le_bytes()); // numnorms
     out.extend_from_slice(&0i32.to_le_bytes()); // normindex
-    assert_eq!(out.len(), 1420, "mesh do teste desalinhou");
+    assert_eq!(out.len(), 1452, "mesh do teste desalinhou");
 
     // ---- stream de triângulo: fan de 3 vértices (0,1,2), depois 0 termina ----
     out.extend_from_slice(&3i16.to_le_bytes());
@@ -906,15 +1421,18 @@ pub(crate) fn synthetic_mdl() -> Vec<u8> {
         out.extend_from_slice(&0i16.to_le_bytes()); // t
     }
     out.extend_from_slice(&0i16.to_le_bytes()); // terminador
-    assert_eq!(out.len(), 1448, "stream de triângulo do teste desalinhou");
+    assert_eq!(out.len(), 1480, "stream de triângulo do teste desalinhou");
 
     // ---- sequência (só o nome importa aqui) ----
     push_str_fixed(&mut out, "idle", 32);
     out.extend_from_slice(&[0u8; SEQDESC_SIZE - 32]);
-    assert_eq!(out.len(), 1624, "sequência do teste desalinhou");
+    assert_eq!(out.len(), 1656, "sequência do teste desalinhou");
 
     out
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_extra;

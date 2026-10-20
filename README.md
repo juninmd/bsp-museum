@@ -176,7 +176,9 @@ src-tauri/src/
   compare.rs        comparação lado a lado de dois mapas
   entity_list.rs    entidades com posição para o painel clicável
   radar.rs          radar verde (PNG/BMP + overview .txt)
-  mdl/mod.rs        parser de modelo `.mdl` (GoldSrc studiomodel v10) — pose de repouso
+  mdl/mod.rs        parser de modelo `.mdl` (GoldSrc studiomodel v10) — pose, animação, blends, controladores, bodygroups
+  mdl/extra.rs      metadados: controladores, bodyparts, flags de material, remap de cor, hitboxes, attachments, eventos
+  mdl/files.rs      arquivos irmãos na pasta do modelo: `nomeT.mdl` (texturas) e `nome01.mdl` (sequências)
   catalog.rs        varredura, diagnóstico, montagem do detalhe, da malha 3D e do visualizador avulso de .mdl
   main.rs           comandos Tauri, cache e settings
 src/                frontend (Vite + TS puro)
@@ -238,6 +240,24 @@ velocidade; sequências em `nome01.mdl` (grupo externo) são lidas da mesma past
 (`skinref`) aparecem num seletor quando há mais de uma. A composição de rotação segue `AngleQuaternion`
 do SDK e é coberta por teste contra uma matriz de Euler independente; o `.mdl` de teste é sintético.
 
+**Extras (backend pronto, frontend a ligar; contrato em `src/types/mdl-extra.ts`).** Tudo entra como campo novo
+e opcional no `MdlSummary`/`SeqFrames`; as chamadas antigas continuam iguais.
+
+- *Bone controllers* (`controllers`): olhar/mira (slots 0..3) e boca (slot 4), com tipo, faixa e byte de
+  repouso para montar sliders; `load_sequence(.., controllers)` aplica `StudioCalcBoneAdj` do SDK.
+- *Blends* (`blend`): 2 e 4 blends como no SDK (`StudioSetupBones`); outros N (as sequências de mira/marcha do
+  jogador, 9) usam uma extensão **não conferida contra o motor** (grade 3x3 ou eixo único).
+  `seq_details[i].blend_*` traz o eixo e a faixa em graus de cada blender.
+- *Bodygroups* (`bodyparts`, `load_model(.., body)`): um submodel por bodypart, `(body / base) % nummodels`.
+- *Skin e cor de time* (`load_model(.., skin, top, bottom)`): texturas `DM_Base*` e `Remap?_TTT_UUU_BBB` têm a
+  faixa de cima (160..191 em `DM_Base`) e a de baixo (192..223) refeitas com o matiz 0..255, regra do Xash3D.
+- *Material* (`texture_info`): flatshade, chrome (UV por reflexão), fullbright, aditivo e máscara por textura.
+- *Hitboxes, attachments e eventos*: em repouso no `MdlSummary` e por quadro em `load_sequence`
+  (`attachments`, `hitboxes` com a flag); eventos com o nome dos IDs conhecidos (5001/5011/5021/5031 flash,
+  5002 faísca, 5004 som, 1000..1010 script).
+- *Texturas externas* (`nomeT.mdl`) e grupos de sequência (`nome01.mdl`) são achados na pasta do modelo, sem
+  diferenciar maiúsculas; o mesmo vale para props do mapa.
+
 ## Testes
 
 ```bash
@@ -271,10 +291,13 @@ JSON gerados pelo backend em Rust (WebGL via SwiftShader).
 - A vista 3D mostra as texturas embutidas no BSP **e** as dos WADs, mas precisa que os `.wad`
   estejam na pasta do mod (mesma de onde o mapa foi aberto) e que o `skyname` exista em
   `gfx/env`. Sem isso, entra cor neutra / domo de reserva.
-- `.mdl`: animação usa só o blend 0 de cada sequência, não aplica *bone controllers* e a regra de
-  `motiontype` (zerar a translação do bone de movimento) foi escrita de memória do SDK, sem conferir contra
-  um arquivo real; skin de time por *remap* (tinta de cima/baixo) não está implementada. Sprites (`.spr`)
-  só entram na lista de recursos, não são desenhados.
+- `.mdl`: o `motiontype` (`STUDIO_X/Y/Z` zeram a translação do bone de movimento) foi conferido no
+  `StudioCalcRotations` do SDK, mas nenhum `.mdl` real passou pelo parser (só modelos sintéticos); `STUDIO_LX/LY/LZ`
+  não fazem nada porque o próprio SDK multiplica o deslocamento por 0. Blends além de 2 e 4 (os 9 do jogador),
+  o remap de cor (regra do Xash3D, não do `hw.dll`) e o nome de eventos fora do SDK não foram conferidos contra
+  o jogo. Pivôs, `automove` e grafo de transição de sequências não são lidos. O frontend ainda não usa os
+  controladores, bodygroups, remap e hitboxes (só o backend e o contrato de tipos estão prontos). Sprites
+  (`.spr`) só entram na lista de recursos, não são desenhados.
 - Props `.mdl` dentro do mapa continuam em pose de repouso.
 - Só entram na vista 3D do mapa entidades com `model` **explícito** no BSP — armas/itens que o
   jogo injeta por conta própria (sem essa chave) não têm como ser resolvidos só com o que está no

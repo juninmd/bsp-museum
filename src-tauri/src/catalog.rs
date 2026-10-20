@@ -678,8 +678,7 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
         let key = inst.model.to_ascii_lowercase();
         if !prop_cache.contains_key(&key) {
             let loaded = wad::find_asset(&mod_dir, &inst.model)
-                .and_then(|p| std::fs::read(p).ok())
-                .and_then(|bytes| crate::mdl::parse(&bytes).ok());
+                .and_then(|p| crate::mdl::files::parse_file(&p, &crate::mdl::ParseOptions::default()).ok());
             let entry = loaded.map(|model| {
                 let base = textures.len() as u32;
                 for t in &model.textures {
@@ -817,11 +816,26 @@ pub struct MdlSummary {
     pub num_bones: u32,
     /// por família de skin: textura que substitui cada textura base (índice = textura da família 0)
     pub skin_families: Vec<Vec<u32>>,
+    /// controladores, bodygroups, materiais, hitboxes, attachments, eventos (campos novos, opcionais)
+    #[serde(flatten)]
+    pub extra: crate::mdl::MdlExtra,
 }
 
 pub fn load_model(path: &Path) -> Result<MdlSummary, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("não leu o arquivo: {e}"))?;
-    let model = crate::mdl::parse(&bytes).map_err(|e| e.to_string())?;
+    load_model_ex(path, None, None, None, None)
+}
+
+/// `load_model` com bodygroup (`body`), família de skin e cores de time
+/// (`top`/`bottom`, matiz 0..255). Tudo `None` = igual a `load_model`.
+pub fn load_model_ex(
+    path: &Path,
+    body: Option<u32>,
+    skin: Option<u32>,
+    top: Option<u8>,
+    bottom: Option<u8>,
+) -> Result<MdlSummary, String> {
+    let opts = crate::mdl::ParseOptions { body: body.unwrap_or(0), skin: skin.unwrap_or(0), top, bottom };
+    let model = crate::mdl::files::parse_file(path, &opts)?;
     Ok(MdlSummary {
         positions: model.positions,
         uvs: model.uvs,
@@ -837,25 +851,30 @@ pub fn load_model(path: &Path) -> Result<MdlSummary, String> {
         vert_bones: model.vert_bones,
         num_bones: model.num_bones,
         skin_families: model.skin_families,
+        extra: model.extra,
     })
-}
-
-/// Arquivo de grupo externo de sequências: `modelo.mdl` + grupo 1 -> `modelo01.mdl`
-/// (convenção do `studiomdl`), na mesma pasta e com a mesma extensão do original.
-fn external_group_path(path: &Path, group: u32) -> PathBuf {
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
-    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("mdl");
-    path.with_file_name(format!("{stem}{group:02}.{ext}"))
 }
 
 /// Quadros de uma sequência (pose de mundo por bone), carregados sob demanda
 /// pra não mandar a animação inteira do modelo de uma vez pelo IPC. Arredondados
 /// a 1e-4 (sobra de sobra pra pose; encurta o JSON pela metade).
 pub fn load_sequence(path: &Path, index: usize) -> Result<crate::mdl::SeqFrames, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("não leu o arquivo: {e}"))?;
-    let external = |group: u32| std::fs::read(external_group_path(path, group)).ok();
-    let mut frames = crate::mdl::sequence_frames(&bytes, index, &external).map_err(|e| e.to_string())?;
-    for v in &mut frames.data {
+    load_sequence_ex(path, index, None, None, false)
+}
+
+/// `load_sequence` com blenders (bytes 0..255 dos blenders 0 e 1), bone controllers
+/// (bytes dos controladores 0..3 e da boca) e caixas de acerto por quadro. Grupos
+/// externos (`nome01.mdl`) são lidos da mesma pasta.
+pub fn load_sequence_ex(
+    path: &Path,
+    index: usize,
+    blend: Option<[u8; 2]>,
+    controllers: Option<[u8; 5]>,
+    hitboxes: bool,
+) -> Result<crate::mdl::SeqFrames, String> {
+    let opts = crate::mdl::SeqOptions { blend: blend.unwrap_or_default(), controllers, hitboxes };
+    let mut frames = crate::mdl::files::sequence_file(path, index, &opts)?;
+    for v in frames.data.iter_mut().chain(&mut frames.attachments).chain(&mut frames.hitboxes) {
         *v = (*v * 1e4).round() / 1e4;
     }
     Ok(frames)
