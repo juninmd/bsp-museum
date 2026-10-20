@@ -97,6 +97,11 @@ impl<'a> Cursor<'a> {
         Ok([self.f32()?, self.f32()?, self.f32()?, self.f32()?])
     }
 
+    /// Próximos `n` bytes crus (pixels, paleta), ou erro se o arquivo acabar antes.
+    pub fn bytes(&mut self, n: usize) -> Result<&'a [u8]> {
+        self.take(n)
+    }
+
     pub fn skip(&mut self, n: usize) -> Result<()> {
         self.take(n).map(|_| ())
     }

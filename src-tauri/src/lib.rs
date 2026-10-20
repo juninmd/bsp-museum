@@ -11,6 +11,7 @@ pub mod mdl;
 pub mod radar;
 pub mod resources;
 pub mod util;
+pub mod spr; pub mod wadlist; pub mod image;
 #[cfg(test)]
 mod fixture;
 #[cfg(test)]

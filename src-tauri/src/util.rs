@@ -21,3 +21,31 @@ pub fn export_text(target: &str, content: &str) -> Result<(), String> {
     }
     std::fs::write(target, content).map_err(|e| format!("não gravou {target}: {e}"))
 }
+
+/// Confere um caminho vindo da interface antes de abri-lo: sem `..`, é arquivo comum
+/// (não pasta, não dispositivo), tem uma das extensões esperadas e não passa de `max_bytes`.
+/// Devolve o tamanho. Cada visualizador (sprite, WAD, imagem) só abre o formato que declara.
+pub fn check_file(path: &Path, exts: &[&str], max_bytes: u64) -> Result<u64, String> {
+    use std::path::Component;
+    if path.components().any(|c| matches!(c, Component::ParentDir)) {
+        return Err(format!("caminho com `..` não é aceito: {}", path.display()));
+    }
+    let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+    if !ext.as_deref().is_some_and(|e| exts.contains(&e)) {
+        return Err(format!("extensão não suportada (esperado: {}): {}", exts.join(", "), path.display()));
+    }
+    let meta = std::fs::metadata(path).map_err(|e| format!("não abriu {}: {e}", path.display()))?;
+    if !meta.is_file() {
+        return Err(format!("não é um arquivo: {}", path.display()));
+    }
+    if meta.len() > max_bytes {
+        return Err(format!("arquivo grande demais ({} bytes, máximo {max_bytes}): {}", meta.len(), path.display()));
+    }
+    Ok(meta.len())
+}
+
+/// `check_file` + leitura inteira do arquivo.
+pub fn read_checked(path: &Path, exts: &[&str], max_bytes: u64) -> Result<Vec<u8>, String> {
+    check_file(path, exts, max_bytes)?;
+    std::fs::read(path).map_err(|e| format!("não leu {}: {e}", path.display()))
+}

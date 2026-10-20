@@ -76,3 +76,23 @@ Documentação e fontes usadas para implementar a vista 3D e a decodificação d
   PNG válido e comprimido, sem depender de um crate de imagem completo.
   - <https://www.rfc-editor.org/rfc/rfc1950> (zlib)
   - Estrutura do container PNG: <https://www.w3.org/TR/PNG/>
+
+## Sprites `.spr`, navegador de WAD e imagens soltas
+
+- **Sprite GoldSrc (`IDSP` v2)** — `src-tauri/src/spr.rs`. Layout (cabeçalho de 40 bytes, `i16` de cores +
+  paleta RGB, frames simples/grupos com intervalos **acumulados**) escrito a partir de `sprite.h`/`spritegen`
+  do SDK e do loader de sprites do Xash3D (`R_GetSpriteFrame` define a leitura dos intervalos). Regras de
+  transparência por `texFormat` (normal / additive / index-alpha / alpha-test) seguem o motor. Não conferido
+  contra um `.spr` real neste ambiente (testes com arquivos sintéticos):
+  - <https://developer.valvesoftware.com/wiki/SPR>
+
+- **WAD3 — tipos de lump** — `src-tauri/src/wadlist.rs`: `0x40` decal, `0x42` qpic, `0x43` miptex, `0x46`
+  fonte (WAD2 do Quake: `0x40` paleta, `0x44` miptex sem paleta, `0x45` figura do console). Fonte, console e
+  paleta só são listados. O decal usa a mesma decodificação do miptex (índice 255 furado só com prefixo `{`);
+  a regra própria de alpha dos decals do motor não foi conferida contra um `decals.wad` real.
+
+- **BMP / TGA / `.lmp`** — `src-tauri/src/image.rs` (BMP 8/24/32 bits, RLE8 e BITFIELDS de 32 bits; TGA via
+  `bsp/sky.rs::tga_decode`; `.lmp`/`qpic` = `u32 w, u32 h, pixels` + paleta `u16 256` + 768 bytes quando
+  existir, senão tons de cinza):
+  - <https://en.wikipedia.org/wiki/BMP_file_format>
+  - <https://en.wikipedia.org/wiki/Truevision_TGA>
