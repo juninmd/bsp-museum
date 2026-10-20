@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
+import { open as openDir, save } from "@tauri-apps/plugin-dialog";
 import { auditCsv, auditHtml, auditMarkdown, auditTotals, fmtSize, sortedRows, worstSeverity } from "../lib/report.ts";
 import { findingText, modeLabel, t } from "../i18n.ts";
 import type { AuditReport } from "../types.ts";
@@ -42,6 +42,7 @@ export function renderAudit(report: AuditReport): string {
       <button class="ghost2" data-fmt="md">${escapeHtml(t("audit.exportMd"))}</button>
       <button class="ghost2" data-fmt="csv">${escapeHtml(t("audit.exportCsv"))}</button>
       <button class="ghost2" data-fmt="html">${escapeHtml(t("audit.exportHtml"))}</button>
+      <button class="ghost2" id="audit-agent" title="${escapeHtml(t("audit.agentHint"))}">${escapeHtml(t("audit.exportAgent"))}</button>
     </div>
     <div class="table-wrap"><table class="table audit-table">
       <thead><tr><th>${escapeHtml(t("report.col.map"))}</th><th>${escapeHtml(t("report.col.mode"))}</th><th>${escapeHtml(t("report.col.size"))}</th><th>${escapeHtml(t("report.col.spawns"))}</th><th>${escapeHtml(t("report.col.findings"))}</th></tr></thead>
@@ -83,6 +84,16 @@ export async function openAudit(
       setStatus(t("status.exported", target));
     }),
   );
+  body.querySelector<HTMLButtonElement>("#audit-agent")?.addEventListener("click", async () => {
+    const out = await openDir({ directory: true, multiple: false, title: t("audit.agentPick") });
+    if (typeof out !== "string") return;
+    try {
+      const r = await invoke<{ out_dir: string; maps: number }>("export_agent_context", { dir, out, slots });
+      setStatus(t("audit.agentDone", r.maps, r.out_dir));
+    } catch (err) {
+      setStatus(String(err), "error");
+    }
+  });
   body.querySelectorAll<HTMLButtonElement>(".audit-open").forEach((btn) =>
     btn.addEventListener("click", () => {
       closeModal();

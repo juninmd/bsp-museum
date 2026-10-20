@@ -2,7 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use bsp_museum_core::util::{self, write_atomic};
-use bsp_museum_core::{audio, audit, bsp, catalog, compare, entity_list, hulls, image, mdl, modfiles, radar, scene, spr, volumes, wadlist};
+use bsp_museum_core::{agentctx, audio, audit, bsp, catalog, compare, entity_list, hulls, image, mdl, modfiles, radar, scene, spr, volumes, wadlist};
 
 use catalog::{MapDetail, MapSummary};
 use serde::{Deserialize, Serialize};
@@ -192,6 +192,16 @@ async fn audit_folder(dir: String, slots: usize) -> Result<audit::AuditReport, S
         return Err(format!("não é uma pasta: {dir}"));
     }
     blocking(move || audit::run(&path, slots.max(2))).await
+}
+
+/// Exporta o acervo como contexto para agentes (index.json, REPORT.md, fastdl.txt, AGENTS.md).
+#[tauri::command]
+async fn export_agent_context(dir: String, out: String, slots: usize) -> Result<agentctx::ExportSummary, String> {
+    let dir = PathBuf::from(dir);
+    if !dir.is_dir() {
+        return Err(format!("não é uma pasta: {}", dir.display()));
+    }
+    blocking(move || agentctx::export(&dir, &PathBuf::from(out), slots.max(2))).await?
 }
 
 #[tauri::command]
@@ -434,6 +444,7 @@ fn main() {
             map_scene,
             audit_folder,
             compare_maps,
+            export_agent_context,
             map_radar,
             export_radar,
             export_text,
