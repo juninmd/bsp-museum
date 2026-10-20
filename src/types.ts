@@ -1,3 +1,5 @@
+import type { MdlExtra } from "./types/mdl-extra.ts";
+
 export type GameMode =
   | "bomb"
   | "hostage"
@@ -147,7 +149,7 @@ export interface ModelDir {
 }
 
 /** `.mdl` isolado (visualizador avulso) — mesma malha não-indexada do `MeshDetail`. */
-export interface MdlSummary {
+export interface MdlSummary extends MdlExtra {
   positions: number[];
   uvs: number[];
   texindex: number[];

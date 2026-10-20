@@ -189,8 +189,10 @@ src/                frontend (Vite + TS puro)
   lib/report.ts     relatório de auditoria (MD/CSV/HTML) e lista de FastDL (puro)
   i18n.ts           pt/en (`lib/dict.ts`, `lib/findings-en.ts`)
   ui/               detalhe, comparação, auditoria, modal
-  resources.ts      aba Recursos: barra de animação do .mdl
-  model-viewer.ts   cena própria do .mdl (skinning na CPU)
+  lib/mdl-controls.ts  slider -> byte, cache de quadros, plano de material, caixas por quadro do .mdl (puro)
+  lib/dict-model.ts    textos do painel do .mdl (entra em `DICT`)
+  resources.ts      aba Recursos: barra de animação e painel de controles do .mdl
+  model-viewer.ts   cena própria do .mdl (skinning na CPU, materiais, overlays)
 ```
 
 Duas decisões que valem explicação:
@@ -240,8 +242,8 @@ velocidade; sequências em `nome01.mdl` (grupo externo) são lidas da mesma past
 (`skinref`) aparecem num seletor quando há mais de uma. A composição de rotação segue `AngleQuaternion`
 do SDK e é coberta por teste contra uma matriz de Euler independente; o `.mdl` de teste é sintético.
 
-**Extras (backend pronto, frontend a ligar; contrato em `src/types/mdl-extra.ts`).** Tudo entra como campo novo
-e opcional no `MdlSummary`/`SeqFrames`; as chamadas antigas continuam iguais.
+**Extras (contrato em `src/types/mdl-extra.ts`).** Tudo entra como campo novo e opcional no `MdlSummary`/`SeqFrames`;
+as chamadas antigas continuam iguais. O painel ao lado da cena (Recursos) usa todos eles — ver *Painel de controles* abaixo.
 
 - *Bone controllers* (`controllers`): olhar/mira (slots 0..3) e boca (slot 4), com tipo, faixa e byte de
   repouso para montar sliders; `load_sequence(.., controllers)` aplica `StudioCalcBoneAdj` do SDK.
@@ -257,6 +259,29 @@ e opcional no `MdlSummary`/`SeqFrames`; as chamadas antigas continuam iguais.
   5002 faísca, 5004 som, 1000..1010 script).
 - *Texturas externas* (`nomeT.mdl`) e grupos de sequência (`nome01.mdl`) são achados na pasta do modelo, sem
   diferenciar maiúsculas; o mesmo vale para props do mapa.
+
+**Painel de controles (aba Recursos).** Só aparecem as seções que o modelo tem:
+
+- *Bodygroups*: um seletor por bodypart (`bodyValue`); trocar recarrega o modelo (`load_model(path, body, top, bottom)`) sem mexer na câmera.
+- *Cores de time*: matiz 0..255 de cima e de baixo (amostra do matiz; clicar nela volta à cor do modelo), só em modelo com
+  textura de remap; a textura recolorida vem do backend.
+- *Controladores*: um slider por bone controller (olhar/mira e boca). O slider anda em **bytes** (0..`input_max`) e o rótulo
+  mostra o valor real em graus/unidades (`controllerValue`, espelho de `ControllerInfo::value_for`). Com todos no repouso
+  o `load_sequence` vai sem `controllers` (mesma pose e mesma chave de cache de antes).
+- *Blends*: 1 ou 2 sliders conforme `seq_details[i].blend_*` (o 9-blend do jogador usa 2 eixos); começam no zero da faixa
+  quando ela o cruza (mira reta).
+- *Sobreposições*: hitboxes (12 arestas por caixa, cor por grupo, interpoladas por quadro) e attachments (cruz + nome),
+  ambas desenhadas por cima da malha. As caixas por quadro só são pedidas (`hitboxes: true`) com o overlay ligado.
+- *Eventos* da sequência atual: lista com o quadro (clicar vai ao quadro) e um marcador na barra do tempo; o evento do
+  quadro atual fica destacado. *Avisos* do modelo (`warnings`) e o aviso de textura externa ficam numa seção discreta.
+
+Mexer num slider de controlador/blend recarrega só os quadros da sequência (`load_sequence`, com *debounce* de 120 ms no
+arrasto, mantendo o quadro e o tocar/pausar); os quadros ficam em cache por (sequência, blend, controladores, hitboxes),
+no máximo 48 entradas por modelo aberto. Materiais por textura (`texture_info`): *chrome* = matcap com a própria textura
+(aproximação da reflexão do motor, sem o UV por pixel), *fullbright* = sem iluminação, *aditivo* = mistura aditiva sem
+escrita de profundidade, *máscara* = `alphaTest`, *flatshade* = normal da face (o resto usa normais suavizadas por
+vértice com corte de aresta a 60°, já que o `.mdl` não é lido com as normais próprias). Partes puras (slider -> byte,
+chave de cache, plano de material, interpolação das caixas) em `src/lib/mdl-controls.ts`, com testes.
 
 ## Testes
 

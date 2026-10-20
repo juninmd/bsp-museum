@@ -1,3 +1,5 @@
+import { DICT_MODEL } from "./dict-model.ts";
+
 /**
  * Textos da interface: `[português, inglês]`. `{0}`, `{1}`… são argumentos de `t()`.
  * Uma fonte só para os dois idiomas — chave sem par não passa no teste de paridade.
@@ -259,4 +261,5 @@ export const DICT: Record<string, [string, string]> = {
   "report.col.rule": ["Regra", "Rule"],
   "report.col.finding": ["Achado", "Finding"],
   "report.col.findings": ["Achados", "Findings"],
+  ...DICT_MODEL,
 };

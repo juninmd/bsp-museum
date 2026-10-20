@@ -920,3 +920,30 @@ fn tabelas_opcionais_corrompidas_viram_aviso_e_a_malha_continua() {
     assert_eq!(f.frames, 2);
     assert!(f.hitboxes.is_empty() && f.attachments.is_empty());
 }
+
+// Dados para o visualizador de `.mdl` nas capturas de tela (não roda no `cargo test` normal):
+//   FIXTURE_DIR=/tmp/fx cargo test gerar_dados_mdl_rico -- --ignored
+// Grava o modelo rico em disco e o que `load_model`/`load_sequence` devolveriam por IPC.
+#[test]
+#[ignore = "gera dados para as capturas: FIXTURE_DIR=<pasta> cargo test gerar_dados_mdl_rico -- --ignored"]
+fn gerar_dados_mdl_rico() {
+    use crate::catalog::{load_model_ex, load_sequence_ex};
+    let out = std::path::PathBuf::from(std::env::var("FIXTURE_DIR").expect("defina FIXTURE_DIR"));
+    let dir = out.join("models");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("rico.mdl");
+    std::fs::write(&path, rich_mdl().data).unwrap();
+    let put = |name: &str, json: String| std::fs::write(out.join(name), json).unwrap();
+    for body in 0..2u32 {
+        let m = load_model_ex(&path, Some(body), None, None, None).unwrap();
+        put(&format!("mdl-model-body{body}.json"), serde_json::to_string(&m).unwrap());
+    }
+    let m = load_model_ex(&path, None, None, Some(30), Some(150)).unwrap();
+    put("mdl-model-team.json", serde_json::to_string(&m).unwrap());
+    for (name, blend) in [("0", [0u8, 0]), ("255", [255, 0])] {
+        let s = load_sequence_ex(&path, 0, Some(blend), Some([0, 0, 0, 0, 0]), true).unwrap();
+        put(&format!("mdl-walk-{name}.json"), serde_json::to_string(&s).unwrap());
+    }
+    let idle = load_sequence_ex(&path, 1, None, None, true).unwrap();
+    put("mdl-idle.json", serde_json::to_string(&idle).unwrap());
+}

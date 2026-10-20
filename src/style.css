@@ -770,6 +770,239 @@ h3 {
   height: 100%;
 }
 
+
+/* controles do .mdl: painel ao lado da cena, marcadores de evento na barra do tempo */
+.res-viewer-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: start;
+}
+
+.res-viewer-body:has(.res-panel[hidden]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.res-panel {
+  width: 17rem;
+  max-height: 70vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.6rem 0.7rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.78rem;
+}
+
+.res-panel[hidden] {
+  display: none;
+}
+
+.mdl-sec h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.mdl-sec-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.mdl-row {
+  display: grid;
+  grid-template-columns: 5.2rem minmax(0, 1fr) 3.2rem;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.mdl-row > select {
+  grid-column: 2 / -1;
+  min-width: 0;
+}
+
+.mdl-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.mdl-val {
+  text-align: right;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.mdl-row input[type="range"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.mdl-swatch {
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  padding: 0;
+  margin-right: 0.35rem;
+  vertical-align: -0.1rem;
+  border-radius: 50%;
+  border: 1px solid var(--dim);
+}
+
+.mdl-swatch.off {
+  background-image: repeating-linear-gradient(45deg, var(--line) 0 3px, transparent 3px 6px);
+}
+
+.mdl-mini {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--dim);
+  font-size: 0.7rem;
+  padding: 0.12rem 0.4rem;
+  align-self: flex-start;
+}
+
+.mdl-mini:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.mdl-mini[hidden] {
+  display: none;
+}
+
+.mdl-check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.mdl-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding-left: 1.4rem;
+}
+
+.mdl-chip {
+  min-width: 1.2rem;
+  text-align: center;
+  font-size: 0.68rem;
+  line-height: 1.1rem;
+  border: 2px solid var(--line);
+  border-radius: 4px;
+  color: var(--dim);
+}
+
+.mdl-ev-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  max-height: 10rem;
+  overflow-y: auto;
+}
+
+.mdl-ev {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.1rem 0.5rem;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.2rem 0.4rem;
+  color: var(--text);
+  font-size: 0.74rem;
+}
+
+.mdl-ev:hover {
+  border-color: var(--accent);
+}
+
+.mdl-ev.now {
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+}
+
+.mdl-ev-frame {
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.mdl-ev-opt {
+  flex-basis: 100%;
+  color: var(--dim);
+  font-size: 0.68rem;
+  word-break: break-all;
+}
+
+.mdl-notes {
+  font-size: 0.7rem;
+  color: var(--dim);
+}
+
+.mdl-note {
+  margin: 0 0 0.3rem;
+}
+
+.mdl-warn summary {
+  cursor: pointer;
+  color: var(--warn);
+}
+
+.mdl-warn ul {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.frame-track {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.frame-ticks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.frame-tick {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 0.35rem;
+  margin-left: -1px;
+  background: var(--warn);
+  border-radius: 1px;
+  pointer-events: auto;
+}
+
+@media (max-width: 1100px) {
+  .res-viewer-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .res-panel {
+    width: auto;
+    max-height: none;
+  }
+}
+
 @media (max-width: 900px) {
   .res-layout {
     grid-template-columns: 1fr;
