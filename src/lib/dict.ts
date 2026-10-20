@@ -6,6 +6,7 @@ import { DICT_EXPLORER } from "./dict-explorer.ts";
  * Uma fonte só para os dois idiomas — chave sem par não passa no teste de paridade.
  */
 import { DICT_VIEWER } from "./dict-viewer.ts";
+import { DICT_SKINS } from "./dict-skins.ts";
 
 export const DICT: Record<string, [string, string]> = {
   locale: ["pt-BR", "en-US"],
@@ -274,4 +275,6 @@ export const DICT: Record<string, [string, string]> = {
   ...DICT_EXPLORER,
 
   ...DICT_VIEWER,
+
+  ...DICT_SKINS,
 };

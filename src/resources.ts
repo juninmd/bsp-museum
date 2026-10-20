@@ -22,6 +22,7 @@ import {
 } from "./lib/mdl-controls.ts";
 import { mountModelViewer3D, type ModelViewer } from "./model-viewer.ts";
 import { bodyValue, type MdlSeqFramesEx, type MdlSummaryEx } from "./types/mdl-extra.ts";
+import { mountSkins, type Skins } from "./ui/skins.ts";
 
 /** floats por bone por quadro: posição (3) + quaternion xyzw (4) — mesmo layout de `mdl::POSE_STRIDE` */
 const STRIDE = 7;
@@ -123,6 +124,8 @@ function bindAnimation(viewer: ModelViewer, initial: MdlSummaryEx, path: string)
   let showHit = false;
   let showAtt = false;
   let skinMap: number[] = [];
+  let activeSkin = 0;
+  let skins: Skins | null = null;
 
   const hitGroups = hitboxInfo.map((h) => h.group);
   const restBoxes = new Float32Array(hitboxInfo.length * BOX_STRIDE);
@@ -322,6 +325,7 @@ function bindAnimation(viewer: ModelViewer, initial: MdlSummaryEx, path: string)
       out = new Float32Array(model.local_positions.length);
       mats = new Float32Array(model.num_bones * 12);
       viewer.setTextureMap(skinMap);
+      skins?.setModel(next);
       if (pose) render();
       else {
         viewer.setVertexPositions(model.positions);
@@ -688,14 +692,30 @@ function bindAnimation(viewer: ModelViewer, initial: MdlSummaryEx, path: string)
   skinSel.replaceChildren();
   model.skin_families.forEach((_, i) => skinSel.append(new Option(t("mdl.skinN", i + 1), String(i))));
   skinWrap.hidden = model.skin_families.length < 2;
-  skinSel.addEventListener(
-    "change",
-    () => {
-      skinMap = model.skin_families[Number(skinSel.value)] ?? [];
-      viewer.setTextureMap(skinMap);
-    },
-    on,
-  );
+
+  /** aplica uma família de skin: seletor da barra, texturas do visualizador e a faixa de skins */
+  function setSkin(index: number) {
+    activeSkin = index;
+    skinMap = model.skin_families[index] ?? [];
+    skinSel.value = String(index);
+    viewer.setTextureMap(skinMap);
+    skins?.setSkin(index);
+  }
+  skinSel.addEventListener("change", () => setSkin(Number(skinSel.value)), on);
+
+  // Faixa de skins (galeria 3D, comparação, equipes, mapa UV): fica abaixo do visualizador.
+  const anchor = skinWrap.closest<HTMLElement>(".res-viewer-wrap");
+  if (anchor) {
+    skins = mountSkins({
+      viewer,
+      anchor,
+      model: () => model,
+      skin: () => activeSkin,
+      setSkin,
+      loadVariant: (topColor, bottomColor) =>
+        invoke<MdlSummaryEx>("load_model", { path, body: bodyValue(parts, choices), top: topColor, bottom: bottomColor }),
+    });
+  }
 
   // Trocar o idioma refaz os textos do painel (o estado dos controles fica).
   const langWatch = new MutationObserver(() => {
@@ -717,6 +737,8 @@ function bindAnimation(viewer: ModelViewer, initial: MdlSummaryEx, path: string)
   return {
     dispose() {
       ctl.abort();
+      skins?.dispose();
+      skins = null;
       langWatch.disconnect();
       refreshPose.cancel();
       scheduleReload.cancel();
