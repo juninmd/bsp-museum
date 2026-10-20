@@ -2,7 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use bsp_museum_core::util::{self, write_atomic};
-use bsp_museum_core::{audit, bsp, catalog, compare, entity_list, mdl, radar};
+use bsp_museum_core::{audio, audit, bsp, catalog, compare, entity_list, image, mdl, modfiles, radar, spr, wadlist};
 
 use catalog::{MapDetail, MapSummary};
 use serde::{Deserialize, Serialize};
@@ -233,13 +233,113 @@ fn list_models(dir: String) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command(async)]
-fn load_model(path: String) -> Result<catalog::MdlSummary, String> {
-    catalog::load_model(&PathBuf::from(path))
+fn load_model(
+    path: String,
+    body: Option<u32>,
+    skin: Option<u32>,
+    top: Option<u8>,
+    bottom: Option<u8>,
+) -> Result<catalog::MdlSummary, String> {
+    catalog::load_model_ex(&PathBuf::from(path), body, skin, top, bottom)
 }
 
 #[tauri::command(async)]
-fn load_sequence(path: String, index: usize) -> Result<mdl::SeqFrames, String> {
-    catalog::load_sequence(&PathBuf::from(path), index)
+fn load_sequence(
+    path: String,
+    index: usize,
+    blend: Option<[u8; 2]>,
+    controllers: Option<[u8; 5]>,
+    hitboxes: Option<bool>,
+) -> Result<mdl::SeqFrames, String> {
+    catalog::load_sequence_ex(&PathBuf::from(path), index, blend, controllers, hitboxes.unwrap_or(false))
+}
+
+#[tauri::command(async)]
+fn load_sprite(path: String) -> Result<spr::SpriteInfo, String> {
+    spr::load_sprite(&PathBuf::from(path))
+}
+
+#[tauri::command(async)]
+fn list_wad(path: String) -> Result<wadlist::WadListing, String> {
+    wadlist::list_wad(&PathBuf::from(path))
+}
+
+#[tauri::command(async)]
+fn wad_texture(path: String, name: String, with_mips: Option<bool>) -> Result<wadlist::WadTexture, String> {
+    wadlist::wad_texture(&PathBuf::from(path), &name, with_mips.unwrap_or(false))
+}
+
+#[tauri::command]
+async fn wad_usage(wad_path: String, maps_dir: String) -> Result<wadlist::WadUsage, String> {
+    blocking(move || wadlist::wad_usage(&PathBuf::from(wad_path), &PathBuf::from(maps_dir))).await?
+}
+
+#[tauri::command(async)]
+fn load_image(path: String) -> Result<image::ImageInfo, String> {
+    image::load_image(&PathBuf::from(path))
+}
+
+fn origin_of(origin: Option<String>) -> Option<modfiles::Root> {
+    match origin.as_deref() {
+        Some("mod") => Some(modfiles::Root::Mod),
+        Some("valve") => Some(modfiles::Root::Valve),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+async fn list_mod_files(
+    mod_root: String,
+    valve_root: Option<String>,
+    include_paks: Option<bool>,
+    max_entries: Option<usize>,
+) -> Result<modfiles::ModListing, String> {
+    blocking(move || {
+        let valve = valve_root.map(PathBuf::from);
+        let mut opts = modfiles::ListOptions::default();
+        if let Some(v) = include_paks {
+            opts.include_paks = v;
+        }
+        if let Some(v) = max_entries {
+            opts.max_entries = v;
+        }
+        modfiles::list_mod_files(&PathBuf::from(mod_root), valve.as_deref(), &opts)
+    })
+    .await?
+}
+
+#[tauri::command(async)]
+fn read_mod_file(
+    mod_root: String,
+    valve_root: Option<String>,
+    rel: String,
+    max_bytes: usize,
+    origin: Option<String>,
+) -> Result<modfiles::FilePreview, String> {
+    let valve = valve_root.map(PathBuf::from);
+    modfiles::read_mod_file_in(&PathBuf::from(mod_root), valve.as_deref(), &rel, max_bytes, origin_of(origin))
+}
+
+#[tauri::command(async)]
+fn analyze_mod_file(
+    mod_root: String,
+    valve_root: Option<String>,
+    rel: String,
+    origin: Option<String>,
+) -> Result<modfiles::ModFileAnalysis, String> {
+    let valve = valve_root.map(PathBuf::from);
+    modfiles::ModRoots::new(&PathBuf::from(mod_root), valve.as_deref())?.analyze(&rel, origin_of(origin))
+}
+
+#[tauri::command(async)]
+fn read_mod_audio(
+    mod_root: String,
+    valve_root: Option<String>,
+    rel: String,
+    origin: Option<String>,
+) -> Result<audio::AudioData, String> {
+    let valve = valve_root.map(PathBuf::from);
+    modfiles::ModRoots::new(&PathBuf::from(mod_root), valve.as_deref())?.read_audio(&rel, origin_of(origin))
 }
 
 #[tauri::command(async)]
@@ -311,6 +411,15 @@ fn main() {
             list_models,
             load_model,
             load_sequence,
+            load_sprite,
+            list_wad,
+            wad_texture,
+            wad_usage,
+            load_image,
+            list_mod_files,
+            read_mod_file,
+            analyze_mod_file,
+            read_mod_audio,
             load_settings,
             save_settings,
             clear_cache
