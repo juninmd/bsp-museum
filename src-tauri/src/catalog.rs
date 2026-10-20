@@ -3,7 +3,7 @@ use crate::bsp::render::{self, RenderOptions};
 use crate::bsp::wad;
 use crate::bsp::{Bsp, Lump, LUMP_ENTITIES, LUMP_LIGHTING, LUMP_MODELS, LUMP_NAMES, LUMP_TEXTURES};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -75,6 +75,54 @@ pub struct MapDetail {
     pub svg: String,
     pub polygons: usize,
     pub resources: crate::resources::ResourceReport,
+    /// contagens baratas dos recursos extras (hulls, zonas, texturas animadas, estilos de luz, cena)
+    pub extra: ExtraSummary,
+}
+
+/// O que o mapa tem além da geometria visual, só em contagens — o conteúdo vem sob
+/// demanda (`hulls::hull_mesh`, `volumes::volumes`, `scene::scene_of`) ou na malha 3D.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct ExtraSummary {
+    pub clipnodes: usize,
+    pub hulls: Vec<crate::hulls::HullInfo>,
+    /// zonas/gatilhos por classname
+    pub zones: BTreeMap<String, usize>,
+    /// faces de textura invisível (clip, aaatrigger, null…) que o mapa guardou
+    pub invisible_faces: usize,
+    /// grupos de textura animada (`+0nome`…)
+    pub animated_textures: usize,
+    /// estilos de luz usados pelas faces ou declarados por `light` (0 = estático)
+    pub lightstyles: Vec<u8>,
+    pub switchable_lights: usize,
+    /// entidades de cena por tipo
+    pub scene: BTreeMap<String, usize>,
+    /// brush entities com `rendermode`/`renderfx` diferente do normal
+    pub rendered_models: usize,
+    /// brush entities com textura `scroll*` rolando
+    pub scrolling_models: usize,
+    pub train_routes: usize,
+}
+
+/// Contagens dos recursos extras de um mapa já aberto.
+pub fn extra_summary(bsp: &Bsp, parsed: &[entities::Entity]) -> ExtraSummary {
+    let (zones, invisible_faces) = crate::volumes::counts(bsp, parsed);
+    let names = bsp.raw_texture_name.iter().filter(|n| !n.is_empty()).map(String::as_str);
+    let styles = crate::bsp::lightstyle::collect(bsp, parsed);
+    let scene = crate::scene::collect(bsp, parsed);
+    let models = crate::scene::brush_models(bsp, parsed);
+    ExtraSummary {
+        clipnodes: bsp.clipnodes.len(),
+        hulls: crate::hulls::hull_infos(bsp),
+        zones,
+        invisible_faces,
+        animated_textures: crate::bsp::texanim::group(names, &|_| false).len(),
+        switchable_lights: styles.iter().filter(|d| d.switchable).count(),
+        lightstyles: styles.iter().map(|d| d.id).collect(),
+        rendered_models: models.iter().filter(|m| m.render.is_some()).count(),
+        scrolling_models: models.iter().filter(|m| m.scroll.is_some()).count(),
+        train_routes: scene.routes.len(),
+        scene: scene.counts,
+    }
 }
 
 fn map_name(path: &Path) -> String {
@@ -186,11 +234,11 @@ fn parse_first_model(bytes: &[u8]) -> Option<crate::bsp::Model> {
     let maxs = cur.vec3().ok()?;
     let origin = cur.vec3().ok()?;
     let headnode = cur.i32().ok()?;
-    cur.skip(12).ok()?;
+    let hull_heads = [cur.i32().ok()?, cur.i32().ok()?, cur.i32().ok()?];
     let visleafs = cur.i32().ok()?;
     let first_face = cur.i32().ok()?;
     let num_faces = cur.i32().ok()?;
-    Some(crate::bsp::Model { mins, maxs, origin, headnode, visleafs, first_face, num_faces })
+    Some(crate::bsp::Model { mins, maxs, origin, headnode, hull_heads, visleafs, first_face, num_faces })
 }
 
 pub fn find_bsp_files(dir: &Path) -> Vec<PathBuf> {
@@ -369,6 +417,7 @@ pub fn lump_infos(bsp: &Bsp) -> Vec<LumpInfo> {
 pub fn detail(path: &Path, opts: RenderOptions, slots: usize) -> Result<MapDetail, String> {
     let Analysis { bsp, ents, summary, findings, resources } = analyze(path, slots)?;
     let rendered = render::top_down(&bsp, &ents.spawns, opts);
+    let extra = extra_summary(&bsp, &entities::parse(&bsp.entities_raw));
 
     let mut textures: Vec<String> = bsp.textures.iter().map(|t| t.name.clone()).collect();
     textures.sort();
@@ -390,6 +439,7 @@ pub fn detail(path: &Path, opts: RenderOptions, slots: usize) -> Result<MapDetai
         svg: rendered.svg,
         polygons: rendered.polygons,
         resources,
+        extra,
     })
 }
 
@@ -449,6 +499,29 @@ pub struct MeshDetail {
     pub pvs: Option<PvsData>,
     /// versão do BSP (30 GoldSrc, 29 Quake)
     pub bsp_version: i32,
+    /// estilos de luz de cada face do BSP, 4 por face (`255` = vazio; tudo `255` = sem
+    /// lightmap); vazio sem atlas. O atlas `lightmap` guarda o slot 0; os slots 1..=3 estão
+    /// em `lightmap_layers`.
+    pub face_styles: Vec<u8>,
+    /// luz dos slots de estilo 1..=3, mesmo layout/UV do atlas `lightmap` (fundo preto,
+    /// para somar com o multiplicador do estilo)
+    pub lightmap_layers: Vec<LightLayer>,
+    /// padrões dos estilos usados (ver `bsp::lightstyle`)
+    pub lightstyles: Vec<crate::bsp::lightstyle::LightStyleDef>,
+    /// grupos de textura animada, com o índice de cada quadro em `textures`
+    pub texture_anims: Vec<crate::bsp::texanim::TextureAnim>,
+    /// brush entities: faixa de faces, render props e rolagem de textura
+    pub brush_models: Vec<crate::scene::BrushModelInfo>,
+    /// fog, sol, luzes, sprites, sons, portas, trens e rotas
+    pub scene: crate::scene::SceneEntities,
+}
+
+/// Camada extra do lightmap (um slot de estilo): PNG com o mesmo layout do atlas.
+#[derive(Debug, Clone, Serialize)]
+pub struct LightLayer {
+    /// slot do estilo na face (1, 2 ou 3)
+    pub slot: u8,
+    pub png: String,
 }
 
 /// Dados mínimos de PVS: o viewer acha a folha da câmera descendo a árvore e
@@ -532,7 +605,8 @@ fn texture_slot(
 pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("não leu o arquivo: {e}"))?;
     let bsp = Bsp::parse(&bytes).map_err(|e| e.to_string())?;
-    let ents = entities::summarize(&entities::parse(&bsp.entities_raw));
+    let parsed = entities::parse(&bsp.entities_raw);
+    let ents = entities::summarize(&parsed);
     let tex_lump = bsp.lumps[LUMP_TEXTURES];
     let mut wads = wad::WadSet::for_map(path, &ents.wads);
     let skybox = crate::bsp::sky::load_sky(path, ents.sky.as_deref().unwrap_or("")).and_then(|s| {
@@ -568,6 +642,12 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
         tri_face: Vec::new(),
         pvs: None,
         bsp_version: bsp.version,
+        face_styles: Vec::new(),
+        lightmap_layers: Vec::new(),
+        lightstyles: Vec::new(),
+        texture_anims: Vec::new(),
+        brush_models: Vec::new(),
+        scene: crate::scene::SceneEntities::default(),
     };
     let Some(bounds) = bsp.bounds() else {
         return Ok(empty(ents.spawns, skybox));
@@ -652,6 +732,38 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
         }
     }
 
+    // Texturas animadas: cada quadro vira uma entrada em `textures` (do BSP ou do WAD).
+    let wad_names = wad::declared_name_sets(path, &ents.wads);
+    let mut texture_anims = crate::bsp::texanim::group(
+        bsp.raw_texture_name.iter().filter(|n| !n.is_empty()).map(String::as_str),
+        &|name| wad_names.iter().any(|set| set.contains(name)),
+    );
+    {
+        let mut by_name: HashMap<String, i32> = HashMap::new();
+        let mut slot_of = |name: &str, textures: &mut Vec<MeshTexture>| -> i32 {
+            let lower = name.to_ascii_lowercase();
+            if let Some(&s) = by_name.get(&lower) {
+                return s;
+            }
+            let raw = bsp.raw_texture_name.iter().position(|n| n.eq_ignore_ascii_case(name));
+            let slot = match raw {
+                Some(ix) => texture_slot(&mut cache, textures, &bytes, tex_lump, ix, &bsp.raw_texture_name[ix], &mut wads, bsp.is_quake())
+                    .map(|s| s.0 as i32),
+                None => wads.resolve(name).map(|(png, _, _)| {
+                    textures.push(MeshTexture { name: name.to_string(), png: Some(png) });
+                    (textures.len() - 1) as i32
+                }),
+            }
+            .unwrap_or(-1);
+            by_name.insert(lower, slot);
+            slot
+        };
+        for anim in &mut texture_anims {
+            anim.frame_slots = anim.frames.iter().map(|f| slot_of(f, &mut textures)).collect();
+            anim.alt_slots = anim.alt_frames.iter().map(|f| slot_of(f, &mut textures)).collect();
+        }
+    }
+
     // Conta quantas texturas vieram de WAD (não embutidas no BSP).
     let mut embedded_names: std::collections::HashSet<String> = std::collections::HashSet::new();
     for t in &bsp.textures {
@@ -713,6 +825,19 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
     if lightmap.is_none() {
         lm_uvs.clear();
     }
+    let mut lightmap_layers = Vec::new();
+    let mut face_styles = Vec::new();
+    if let (Some(a), Some(_)) = (&atlas, &lightmap) {
+        for layer in &a.layers {
+            if let Some(png) = crate::bsp::rgba_png(a.width, a.height, &layer.rgba) {
+                lightmap_layers.push(LightLayer { slot: layer.slot, png });
+            }
+        }
+        // face sem retângulo no atlas não tem luz própria: não anuncia estilos
+        for (i, face) in bsp.faces.iter().enumerate() {
+            face_styles.extend_from_slice(&if a.faces.get(i).copied().flatten().is_some() { face.styles } else { [255; 4] });
+        }
+    }
 
     Ok(MeshDetail {
         positions,
@@ -730,6 +855,12 @@ pub fn mesh(path: &Path) -> Result<MeshDetail, String> {
         tri_face,
         pvs: pvs_data(&bsp),
         bsp_version: bsp.version,
+        face_styles,
+        lightmap_layers,
+        lightstyles: crate::bsp::lightstyle::collect(&bsp, &parsed),
+        texture_anims,
+        brush_models: crate::scene::brush_models(&bsp, &parsed),
+        scene: crate::scene::collect(&bsp, &parsed),
     })
 }
 

@@ -212,7 +212,7 @@ Textura com offset de pixel `0` vem de WAD externo; diferente de `0` está embut
 diferença que alimenta o aviso de WAD não declarado.
 
 Faces com textura `aaatrigger`, `clip`, `null`, `origin`, `hint`, `skip` e `sky` são volumes
-invisíveis e **não entram na planta** — sem esse filtro, o desenho vira um borrão de caixas de
+invisíveis e **não entram na planta** nem na malha visual (o módulo `volumes` as devolve à parte) — sem esse filtro, o desenho vira um borrão de caixas de
 clip.
 
 O índice `255` da paleta de 256 cores só é buraco (transparência) em textura cujo nome começa com
@@ -282,7 +282,18 @@ JSON gerados pelo backend em Rust (WebGL via SwiftShader).
 - A conferência de WAD olha só o índice de nomes do arquivo (`textura-ausente`), não valida os pixels.
 - Radar: o `ZOOM` do `overviews/<mapa>.txt` é uma estimativa para o enquadramento gerado; o calibre exato
   no cliente do CS não foi conferido contra o jogo — ajuste à mão se o radar desalinhar.
-- Lightmaps: só o estilo 0 (luz estática); estilos animados (piscar, pulsar) não são aplicados.
+- Estilos de luz: o backend entrega os 4 slots de estilo de cada face (atlas principal + camadas) e os padrões
+  (`m`, flicker, pulso…, os de fábrica de memória do `world.cpp` do SDK, sem conferir contra o motor); somar as
+  camadas com os multiplicadores animados é trabalho do viewer. Luz ligável (estilo 32+) começa no estado do
+  `spawnflags`; quem a liga é o gatilho, que o app não simula.
+- Hulls de colisão (`headnode[1..3]`) saem como malha por varredura da árvore de clipnodes. Os tamanhos dos hulls
+  (em pé ±16×±16×±36, grande ±32, agachado ±16×±16×±18) e a regra "só `contents == -2` é sólido" vêm de memória
+  do SDK; nenhum mapa real foi usado para conferir. Hull de brush entity só sai pedindo o modelo.
+- Zonas/volumes: só aparecem brush entities (`model "*N"`) e faces que o compilador guardou — `clip`/`null`/`hint`/
+  `skip` costumam ser descartados na compilação, então o clip de verdade só se vê pelo hull.
+- Texturas animadas: 10 quadros/s e a alternativa `+A…J` ligada por botão seguem o código do Quake; no GoldSrc não
+  foi conferido. Rolagem `scroll*` (regra do `rendercolor`/`func_conveyor`) e fórmulas de porta/botão/plataforma
+  (`lip`, eixo de rotação, deslocamento) foram escritas de memória do HLSDK — a VDC bloqueou a consulta automática.
 - O brilho do lightmap usa fator fixo 2× (convenção *overbright* do Quake); não há gama configurável.
 - Limites do motor (`limite-motor`) são valores de referência do compilador/engine, não lidos do jogo.
 - Atualização automática (`tauri-plugin-updater`) não está ligada: exige par de chaves de assinatura e um
