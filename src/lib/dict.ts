@@ -7,6 +7,7 @@ import { DICT_EXPLORER } from "./dict-explorer.ts";
  */
 import { DICT_VIEWER } from "./dict-viewer.ts";
 import { DICT_SPRITE3D } from "./dict-sprite3d.ts";
+import { DICT_SKINS } from "./dict-skins.ts";
 
 export const DICT: Record<string, [string, string]> = {
   locale: ["pt-BR", "en-US"],
@@ -277,4 +278,5 @@ export const DICT: Record<string, [string, string]> = {
   ...DICT_VIEWER,
 
   ...DICT_SPRITE3D,
+  ...DICT_SKINS,
 };

@@ -1,17 +1,38 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { BOX_STRIDE, hitGroupColor, materialPlan, type MaterialPlan } from "./lib/mdl-controls.ts";
-import type { MdlSummary } from "./types.ts";
-import type { MdlExtra } from "./types/mdl-extra.ts";
+import { BOX_STRIDE, hitGroupColor } from "./lib/mdl-controls.ts";
+import { MdlRig, addModelLights, decodeTextures, emptyTextures, restBounds, toWorld, type Look, type Model, type TextureSet } from "./mdl-rig.ts";
 
-type Model = MdlSummary & MdlExtra;
+export type { Model } from "./mdl-rig.ts";
+
+/** Um lado da comparação: família de skin e, opcionalmente, outro modelo carregado (cores de time) de onde vêm as texturas. */
+export interface LookSpec {
+  /** `map[textura base] = textura da família` */
+  map: readonly number[];
+  /** modelo com as texturas deste lado (ex.: `load_model` com `top`/`bottom`); ausente = o do visualizador */
+  model?: Model;
+}
+
+/**
+ * Comparação de dois looks na mesma cena e com a mesma câmera (a malha é uma só; cada lado é um jogo de materiais):
+ * `side` = dois quadros lado a lado; `split` = antes/depois com divisor arrastável.
+ */
+export interface CompareSpec {
+  mode: "side" | "split";
+  a: LookSpec;
+  b: LookSpec;
+  labels: [string, string];
+  /** posição do divisor (0..1) no modo `split` */
+  pos?: number;
+}
 
 /**
  * Cena 3D própria do visualizador avulso de `.mdl` (independente de
  * `viewer3d.ts`, que é do mapa): orbitável, com a malha dividida por textura
  * e os vértices reposicionáveis a cada quadro (skinning feito por quem chama).
  * Materiais seguem as flags do modelo (chrome, aditivo, máscara, fullbright,
- * flatshade); hitboxes e attachments são overlays opcionais.
+ * flatshade); hitboxes e attachments são overlays opcionais. A geometria vem
+ * de `MdlRig` e é reaproveitada por todas as skins.
  */
 export interface ModelViewer {
   /** reposiciona os vértices: mesmo layout de `MdlSummary.positions` (9 floats por triângulo, espaço do jogo) */
@@ -27,12 +48,13 @@ export interface ModelViewer {
   setHitboxes(boxes: ArrayLike<number> | null, groups?: readonly number[]): void;
   /** origem de cada attachment (x,y,z em espaço do jogo); `null` esconde */
   setAttachments(points: ArrayLike<number> | null, names?: readonly string[]): void;
+  /** liga/desliga a comparação de skins (`null` volta à vista única); resolve quando as texturas dos lados estão prontas */
+  setCompare(spec: CompareSpec | null): Promise<void>;
+  /** realça triângulos (índices de `texindex`) no modelo; lista vazia apaga */
+  setHighlight(tris: readonly number[]): void;
+  /** clique (sem arrastar) em um triângulo do modelo; devolve a função que remove o ouvinte */
+  onPick(listener: (tri: number) => void): () => void;
   dispose(): void;
-}
-
-/** vira Z-up (GoldSrc) em Y-up (Three.js): (x,y,z) -> (x, z, -y). */
-function toWorld(x: number, y: number, z: number): [number, number, number] {
-  return [x, z, -y];
 }
 
 /** arestas de um cubo: pares de cantos (índice = bits sx|sy<<1|sz<<2) que diferem em um bit */
@@ -41,96 +63,6 @@ const BOX_EDGES: [number, number][] = (() => {
   for (let a = 0; a < 8; a++) for (let bit = 1; bit < 8; bit <<= 1) if (!(a & bit)) edges.push([a, a | bit]);
   return edges;
 })();
-
-/** ângulo máximo (cos) entre faces que ainda se suavizam; acima disso a aresta fica dura */
-const SMOOTH_COS = 0.5;
-
-interface Bucket {
-  textureIndex: number;
-  /** triângulo de origem de cada triângulo do bucket */
-  tris: number[];
-  mesh: THREE.Mesh;
-  material: THREE.Material;
-  /** normais da face (flatshade) em vez das suavizadas */
-  flat: boolean;
-}
-
-interface Built {
-  model: Model;
-  textures: (THREE.Texture | null)[];
-  buckets: Bucket[];
-  /** por canto de triângulo: grupo de vértices na mesma posição de repouso (CSR em `groupStart`/`groupCorners`) */
-  cornerGroup: Uint32Array;
-  groupStart: Uint32Array;
-  groupCorners: Uint32Array;
-}
-
-/** Agrupa os cantos de triângulo que coincidem na pose de repouso, pra suavizar as normais. */
-function weldCorners(positions: ArrayLike<number>): Pick<Built, "cornerGroup" | "groupStart" | "groupCorners"> {
-  const corners = Math.floor(positions.length / 3);
-  const ids = new Map<string, number>();
-  const cornerGroup = new Uint32Array(corners);
-  const counts: number[] = [];
-  for (let c = 0; c < corners; c++) {
-    const key = `${Math.round(positions[c * 3]! * 50)},${Math.round(positions[c * 3 + 1]! * 50)},${Math.round(positions[c * 3 + 2]! * 50)}`;
-    let g = ids.get(key);
-    if (g === undefined) {
-      g = counts.length;
-      ids.set(key, g);
-      counts.push(0);
-    }
-    cornerGroup[c] = g;
-    counts[g]!++;
-  }
-  const groupStart = new Uint32Array(counts.length + 1);
-  for (let g = 0; g < counts.length; g++) groupStart[g + 1] = groupStart[g]! + counts[g]!;
-  const fill = groupStart.slice(0, counts.length);
-  const groupCorners = new Uint32Array(corners);
-  for (let c = 0; c < corners; c++) groupCorners[fill[cornerGroup[c]!]!++] = c;
-  return { cornerGroup, groupStart, groupCorners };
-}
-
-/** Decodifica as texturas do modelo; imagem que falha vira `null` (o bucket usa cinza). */
-async function loadTextures(model: Model): Promise<(THREE.Texture | null)[]> {
-  return Promise.all(
-    model.textures.map(async (t) => {
-      if (!t.png) return null;
-      const img = new Image();
-      img.src = t.png;
-      try {
-        await img.decode();
-      } catch {
-        return null;
-      }
-      const tex = new THREE.Texture(img);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.wrapS = THREE.RepeatWrapping;
-      tex.wrapT = THREE.RepeatWrapping;
-      tex.needsUpdate = true;
-      return tex;
-    }),
-  );
-}
-
-function makeMaterial(plan: MaterialPlan, tex: THREE.Texture | null): THREE.Material {
-  let material: THREE.Material & { alphaTest: number };
-  if (plan.shade === "matcap" && tex) {
-    // chrome: a textura é o "espelho" (UV = reflexão da normal em relação à câmera)
-    material = new THREE.MeshMatcapMaterial({ matcap: tex, side: THREE.DoubleSide });
-  } else if (plan.shade === "basic") {
-    material = new THREE.MeshBasicMaterial({ map: tex, color: tex ? 0xffffff : 0x8b98a5, side: THREE.DoubleSide });
-  } else {
-    material = new THREE.MeshStandardMaterial({ map: tex, color: tex ? 0xffffff : 0x8b98a5, roughness: 0.9, metalness: 0, side: THREE.DoubleSide });
-  }
-  if (plan.blend === "masked") {
-    material.alphaTest = 0.5; // texturas mascaradas (grades, cabelo): índice 255 da paleta tem alfa 0
-  } else if (plan.blend === "additive") {
-    material.transparent = true;
-    material.blending = THREE.AdditiveBlending;
-    material.depthWrite = false;
-  }
-  return material;
-}
 
 /** Quaternion xyzw aplicado a um vetor (espaço do jogo). */
 function rotate(q: ArrayLike<number>, o: number, x: number, y: number, z: number): [number, number, number] {
@@ -175,168 +107,49 @@ export function mountModelViewer3D(container: HTMLElement, initial: Model): Mode
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0d1117);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-  scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x33373d, 0.6));
-  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
-  sun.position.set(1, 2, 1.4);
-  scene.add(sun);
-  const fill = new THREE.DirectionalLight(0x8899bb, 0.3);
-  fill.position.set(-1, -0.5, -1);
-  scene.add(fill);
+  addModelLights(scene);
 
-  let built: Built = build(initial, initial.textures.map(() => null));
+  let rig = new MdlRig(initial);
+  scene.add(rig.root);
+  let baseTextures: TextureSet = emptyTextures(initial.textures.length);
+  let primary: Look = rig.addLook([], baseTextures);
   let textureMap: number[] = [];
-  let normals = new Float32Array(0);
-  let faceCross = new Float32Array(0);
-  let faceUnit = new Float32Array(0);
   let disposed = false;
   let swap = 0;
+  let cmp: CompareSpec | null = null;
+  let cmpLooks: Look[] = [];
+  let cmpToken = 0;
+  /** texturas de outros modelos (lados da comparação), por modelo */
+  let extraSets = new Map<Model, Promise<TextureSet>>();
+  const pickListeners = new Set<(tri: number) => void>();
 
-  /** Um mesh por textura, na ordem em que aparecem; `tris` guarda de onde cada triângulo veio. */
-  function build(model: Model, textures: (THREE.Texture | null)[]): Built {
-    const byTexture = new Map<number, { tris: number[]; uvs: number[] }>();
-    for (let tri = 0; tri < model.texindex.length; tri++) {
-      const id = model.texindex[tri]!;
-      let group = byTexture.get(id);
-      if (!group) byTexture.set(id, (group = { tris: [], uvs: [] }));
-      group.tris.push(tri);
-      for (let k = 0; k < 6; k++) group.uvs.push(model.uvs[tri * 6 + k]!);
-    }
-    const buckets: Bucket[] = [];
-    for (const [textureIndex, group] of byTexture) {
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(group.tris.length * 9), 3));
-      geometry.setAttribute("normal", new THREE.BufferAttribute(new Float32Array(group.tris.length * 9), 3));
-      geometry.setAttribute("uv", new THREE.Float32BufferAttribute(group.uvs, 2));
-      const material = new THREE.MeshStandardMaterial();
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.frustumCulled = false; // a pose muda a cada quadro
-      scene.add(mesh);
-      buckets.push({ textureIndex, tris: group.tris, mesh, material, flat: false });
-    }
-    return { model, textures, buckets, ...weldCorners(model.positions) };
-  }
+  const setVertexPositions = (flat: ArrayLike<number>) => rig.setVertexPositions(flat);
 
-  function discard(b: Built) {
-    for (const bucket of b.buckets) {
-      scene.remove(bucket.mesh);
-      bucket.mesh.geometry.dispose();
-      bucket.material.dispose();
-    }
-    for (const t of b.textures) t?.dispose();
-  }
-
-  /** (re)cria o material de cada bucket a partir da textura da família de skin e das flags dela */
-  function applyMaterials() {
-    for (const b of built.buckets) {
-      const id = textureMap[b.textureIndex] ?? b.textureIndex;
-      const tex = built.textures[id] ?? null;
-      const plan = materialPlan(built.model.texture_info?.[id]);
-      b.material.dispose();
-      b.material = makeMaterial(plan, tex);
-      b.mesh.material = b.material;
-      b.mesh.renderOrder = plan.blend === "additive" ? 1 : 0;
-      b.flat = plan.flat;
-    }
+  /** (re)cria o look principal a partir da família de skin atual */
+  function refreshPrimary() {
+    primary.dispose();
+    primary = rig.addLook(textureMap, baseTextures);
+    primary.group.visible = cmp === null;
   }
 
   const setTextureMap = (map: number[]) => {
     textureMap = map;
-    applyMaterials();
-  };
-
-  const setVertexPositions = (flat: ArrayLike<number>) => {
-    const model = built.model;
-    const nTri = Math.floor(model.positions.length / 9);
-    if (faceCross.length !== nTri * 3) {
-      faceCross = new Float32Array(nTri * 3);
-      faceUnit = new Float32Array(nTri * 3);
-      normals = new Float32Array(nTri * 9);
-    }
-    // normal de cada face (e o vetor ponderado pela área)
-    for (let t = 0; t < nTri; t++) {
-      const s = t * 9;
-      const ax = flat[s + 3]! - flat[s]!;
-      const ay = flat[s + 4]! - flat[s + 1]!;
-      const az = flat[s + 5]! - flat[s + 2]!;
-      const bx = flat[s + 6]! - flat[s]!;
-      const by = flat[s + 7]! - flat[s + 1]!;
-      const bz = flat[s + 8]! - flat[s + 2]!;
-      const cx = ay * bz - az * by;
-      const cy = az * bx - ax * bz;
-      const cz = ax * by - ay * bx;
-      const len = Math.hypot(cx, cy, cz);
-      faceCross[t * 3] = cx;
-      faceCross[t * 3 + 1] = cy;
-      faceCross[t * 3 + 2] = cz;
-      faceUnit[t * 3] = len > 1e-9 ? cx / len : 0;
-      faceUnit[t * 3 + 1] = len > 1e-9 ? cy / len : 0;
-      faceUnit[t * 3 + 2] = len > 1e-9 ? cz / len : 1;
-    }
-    // normal suavizada: soma só as faces vizinhas no mesmo vértice com ângulo pequeno (aresta dura continua dura)
-    const { cornerGroup, groupStart, groupCorners } = built;
-    for (let c = 0; c < nTri * 3; c++) {
-      const t = (c / 3) | 0;
-      const fx = faceUnit[t * 3]!;
-      const fy = faceUnit[t * 3 + 1]!;
-      const fz = faceUnit[t * 3 + 2]!;
-      const g = cornerGroup[c]!;
-      let nx = 0;
-      let ny = 0;
-      let nz = 0;
-      for (let k = groupStart[g]!; k < groupStart[g + 1]!; k++) {
-        const o = (groupCorners[k]! / 3) | 0;
-        if (fx * faceUnit[o * 3]! + fy * faceUnit[o * 3 + 1]! + fz * faceUnit[o * 3 + 2]! >= SMOOTH_COS) {
-          nx += faceCross[o * 3]!;
-          ny += faceCross[o * 3 + 1]!;
-          nz += faceCross[o * 3 + 2]!;
-        }
-      }
-      const len = Math.hypot(nx, ny, nz);
-      normals[c * 3] = len > 1e-9 ? nx / len : fx;
-      normals[c * 3 + 1] = len > 1e-9 ? ny / len : fy;
-      normals[c * 3 + 2] = len > 1e-9 ? nz / len : fz;
-    }
-    for (const b of built.buckets) {
-      const pos = b.mesh.geometry.getAttribute("position") as THREE.BufferAttribute;
-      const nor = b.mesh.geometry.getAttribute("normal") as THREE.BufferAttribute;
-      const src = b.flat ? faceUnit : null;
-      for (let t = 0; t < b.tris.length; t++) {
-        const tri = b.tris[t]!;
-        for (let v = 0; v < 3; v++) {
-          const s = tri * 9 + v * 3;
-          const [x, y, z] = toWorld(flat[s]!, flat[s + 1]!, flat[s + 2]!);
-          pos.setXYZ(t * 3 + v, x, y, z);
-          const [nx, ny, nz] = src
-            ? toWorld(src[tri * 3]!, src[tri * 3 + 1]!, src[tri * 3 + 2]!)
-            : toWorld(normals[tri * 9 + v * 3]!, normals[tri * 9 + v * 3 + 1]!, normals[tri * 9 + v * 3 + 2]!);
-          nor.setXYZ(t * 3 + v, nx, ny, nz);
-        }
-      }
-      pos.needsUpdate = true;
-      nor.needsUpdate = true;
-    }
+    refreshPrimary();
   };
 
   // Texturas do modelo inicial chegam depois do primeiro desenho.
-  void loadTextures(initial).then((textures) => {
-    if (disposed || built.model !== initial) {
-      for (const t of textures) t?.dispose();
+  void decodeTextures(initial).then((set) => {
+    if (disposed || rig.model !== initial) {
+      set.dispose();
       return;
     }
-    built.textures = textures;
-    applyMaterials();
+    baseTextures = set;
+    refreshPrimary();
+    if (cmp) void applyCompare();
   });
-  applyMaterials();
-  setVertexPositions(initial.positions);
 
   // Enquadra a câmera na pose de repouso.
-  const box = new THREE.Box3();
-  for (const b of built.buckets) {
-    b.mesh.geometry.computeBoundingBox();
-    box.union(b.mesh.geometry.boundingBox!);
-  }
-  if (box.isEmpty()) box.set(new THREE.Vector3(-50, -50, -50), new THREE.Vector3(50, 50, 50));
+  const box = restBounds(initial);
   const center = box.getCenter(new THREE.Vector3());
   const maxDim = Math.max(...box.getSize(new THREE.Vector3()).toArray(), 1);
 
@@ -362,6 +175,7 @@ export function mountModelViewer3D(container: HTMLElement, initial: Model): Mode
   hitLines.frustumCulled = false;
   hitLines.renderOrder = 10;
   hitLines.visible = false;
+  hitLines.layers.enable(1);
   scene.add(hitLines);
   let hitCount = -1;
   let hitGroupsKey = "";
@@ -444,6 +258,8 @@ export function mountModelViewer3D(container: HTMLElement, initial: Model): Mode
         const label = labelSprite(names[i] || `#${i}`);
         label.scale.set(maxDim * 0.16, maxDim * 0.04, 1);
         label.frustumCulled = false;
+        cross.layers.enable(1);
+        label.layers.enable(1);
         attGroup.add(cross, label);
       }
       attNames = key;
@@ -456,36 +272,242 @@ export function mountModelViewer3D(container: HTMLElement, initial: Model): Mode
     attGroup.visible = true;
   };
 
-  const setModel = async (model: Model) => {
-    const mine = ++swap;
-    const textures = await loadTextures(model);
-    if (disposed || mine !== swap) {
-      for (const t of textures) t?.dispose();
+  // ---- comparação de skins: dois looks sobre a mesma geometria, cada um em uma camada; a câmera é uma só
+
+  const overlay = document.createElement("div");
+  overlay.className = "skin-cmp";
+  overlay.hidden = true;
+  const divider = document.createElement("div");
+  divider.className = "skin-cmp-divider";
+  const handle = document.createElement("div");
+  handle.className = "skin-cmp-handle";
+  handle.setAttribute("role", "separator");
+  handle.tabIndex = 0;
+  divider.append(handle);
+  const tagA = document.createElement("span");
+  const tagB = document.createElement("span");
+  tagA.className = "skin-cmp-tag a";
+  tagB.className = "skin-cmp-tag b";
+  overlay.append(divider, tagA, tagB);
+  container.appendChild(overlay);
+
+  function layoutOverlay() {
+    if (!cmp) return;
+    const pos = cmp.mode === "split" ? (cmp.pos ?? 0.5) : 0.5;
+    divider.style.left = `${pos * 100}%`;
+    divider.classList.toggle("fixed", cmp.mode === "side");
+    tagA.textContent = cmp.labels[0];
+    tagB.textContent = cmp.labels[1];
+    // lado a lado: cada rótulo no seu quadro; antes/depois: nas pontas
+    tagA.style.left = "0.5rem";
+    tagB.style.left = cmp.mode === "side" ? "calc(50% + 0.5rem)" : "";
+    tagB.style.right = cmp.mode === "side" ? "" : "0.5rem";
+    handle.setAttribute("aria-orientation", "vertical");
+    handle.setAttribute("aria-valuenow", String(Math.round(pos * 100)));
+  }
+
+  const ctlEvents = new AbortController();
+  const listen = { signal: ctlEvents.signal };
+  let dragging = false;
+  const moveDivider = (clientX: number) => {
+    if (!cmp || cmp.mode !== "split") return;
+    const r = container.getBoundingClientRect();
+    cmp.pos = Math.min(0.95, Math.max(0.05, (clientX - r.left) / Math.max(1, r.width)));
+    layoutOverlay();
+  };
+  handle.addEventListener(
+    "pointerdown",
+    (e) => {
+      if (!cmp || cmp.mode !== "split") return;
+      dragging = true;
+      handle.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    },
+    listen,
+  );
+  handle.addEventListener("pointermove", (e) => dragging && moveDivider(e.clientX), listen);
+  const endDrag = () => (dragging = false);
+  handle.addEventListener("pointerup", endDrag, listen);
+  handle.addEventListener("pointercancel", endDrag, listen);
+  handle.addEventListener(
+    "keydown",
+    (e) => {
+      if (!cmp || cmp.mode !== "split" || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+      cmp.pos = Math.min(0.95, Math.max(0.05, (cmp.pos ?? 0.5) + (e.key === "ArrowLeft" ? -0.03 : 0.03)));
+      layoutOverlay();
+      e.preventDefault();
+    },
+    listen,
+  );
+
+  function textureSetFor(spec: LookSpec): Promise<TextureSet> {
+    if (!spec.model || spec.model === rig.model) return Promise.resolve(baseTextures);
+    let p = extraSets.get(spec.model);
+    if (!p) extraSets.set(spec.model, (p = decodeTextures(spec.model)));
+    return p;
+  }
+
+  function dropCompareLooks() {
+    for (const l of cmpLooks) l.dispose();
+    cmpLooks = [];
+  }
+
+  /** descarta as texturas de modelos que nenhum lado usa mais */
+  function pruneExtraSets(keep: readonly (Model | undefined)[]) {
+    for (const [model, p] of [...extraSets]) {
+      if (keep.includes(model)) continue;
+      extraSets.delete(model);
+      void p.then((s) => s.dispose());
+    }
+  }
+
+  async function applyCompare() {
+    const mine = ++cmpToken;
+    const spec = cmp;
+    if (!spec) return;
+    const [setA, setB] = await Promise.all([textureSetFor(spec.a), textureSetFor(spec.b)]);
+    if (disposed || mine !== cmpToken || cmp !== spec) return;
+    dropCompareLooks();
+    cmpLooks = [rig.addLook(spec.a.map, setA, 0), rig.addLook(spec.b.map, setB, 1)];
+    primary.group.visible = false;
+    overlay.hidden = false;
+    layoutOverlay();
+  }
+
+  const setCompare: ModelViewer["setCompare"] = async (spec) => {
+    cmp = spec ? { ...spec, pos: spec.pos ?? 0.5 } : null;
+    if (!cmp) {
+      cmpToken++;
+      dropCompareLooks();
+      pruneExtraSets([]);
+      overlay.hidden = true;
+      primary.group.visible = true;
       return;
     }
-    const old = built;
-    built = build(model, textures);
-    discard(old);
-    applyMaterials();
-    setVertexPositions(model.positions);
+    pruneExtraSets([cmp.a.model, cmp.b.model]);
+    await applyCompare();
   };
 
+  // ---- seleção por clique: o raio sai do quadro (e da camada) em que o clique caiu
+  let down: { x: number; y: number } | null = null;
+  const canvas = renderer.domElement;
+  canvas.addEventListener("pointerdown", (e) => (down = { x: e.clientX, y: e.clientY }), listen);
+  canvas.addEventListener(
+    "pointerup",
+    (e) => {
+      const start = down;
+      down = null;
+      if (!start || pickListeners.size === 0 || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4) return;
+      const r = canvas.getBoundingClientRect();
+      let nx = (e.clientX - r.left) / Math.max(1, r.width);
+      const ny = (e.clientY - r.top) / Math.max(1, r.height);
+      let layer = 0;
+      let aspect = r.width / Math.max(1, r.height);
+      if (cmp && cmpLooks.length === 2) {
+        if (cmp.mode === "side") {
+          layer = nx >= 0.5 ? 1 : 0;
+          nx = (nx - layer * 0.5) * 2;
+          aspect = r.width / 2 / Math.max(1, r.height); // a projeção do quadro, não a da tela inteira
+        } else {
+          layer = nx >= (cmp.pos ?? 0.5) ? 1 : 0;
+        }
+      }
+      const savedAspect = camera.aspect;
+      camera.aspect = aspect;
+      camera.updateProjectionMatrix();
+      const tri = rig.pick(nx * 2 - 1, -(ny * 2 - 1), camera, layer);
+      camera.aspect = savedAspect;
+      camera.updateProjectionMatrix();
+      if (tri >= 0) for (const l of pickListeners) l(tri);
+    },
+    listen,
+  );
+
+  const setModel = async (model: Model) => {
+    const mine = ++swap;
+    const textures = await decodeTextures(model);
+    if (disposed || mine !== swap) {
+      textures.dispose();
+      return;
+    }
+    const oldTextures = baseTextures;
+    const oldExtras = extraSets;
+    primary.dispose();
+    dropCompareLooks();
+    rig.dispose();
+    rig = new MdlRig(model);
+    scene.add(rig.root);
+    baseTextures = textures;
+    extraSets = new Map();
+    primary = rig.addLook(textureMap, baseTextures);
+    primary.group.visible = cmp === null;
+    oldTextures.dispose();
+    for (const p of oldExtras.values()) void p.then((s) => s.dispose());
+    if (cmp) void applyCompare();
+  };
+
+  let width = 1;
+  let height = 1;
   const resize = () => {
-    const w = container.clientWidth || 1;
-    const h = container.clientHeight || 1;
-    renderer.setSize(w, h, false);
-    camera.aspect = w / h;
+    width = container.clientWidth || 1;
+    height = container.clientHeight || 1;
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
     camera.updateProjectionMatrix();
   };
   resize();
   const ro = new ResizeObserver(resize);
   ro.observe(container);
 
+  /** desenha uma região (px CSS) com a camada `layer` visível; o aspecto acompanha a região */
+  function renderRegion(x: number, w: number, layer: number) {
+    renderer.setViewport(x, 0, w, height);
+    renderer.setScissor(x, 0, w, height);
+    camera.layers.set(layer);
+    camera.aspect = w / height;
+    camera.updateProjectionMatrix();
+    renderer.render(scene, camera);
+  }
+
+  const renderFrame = () => {
+    if (!cmp || cmpLooks.length < 2) {
+      renderer.setScissorTest(false);
+      renderer.setViewport(0, 0, width, height);
+      camera.layers.set(0);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.render(scene, camera);
+      return;
+    }
+    renderer.setScissorTest(true);
+    if (cmp.mode === "side") {
+      const half = Math.floor(width / 2);
+      renderRegion(0, half, 0);
+      renderRegion(half, width - half, 1);
+    } else {
+      // antes/depois: a mesma imagem inteira, cortada pelo divisor
+      const cut = Math.round(width * (cmp.pos ?? 0.5));
+      renderer.setViewport(0, 0, width, height);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      camera.layers.set(0);
+      renderer.setScissor(0, 0, cut, height);
+      renderer.render(scene, camera);
+      camera.layers.set(1);
+      renderer.setScissor(cut, 0, width - cut, height);
+      renderer.render(scene, camera);
+    }
+    renderer.setScissorTest(false);
+    camera.layers.set(0);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  };
+
   let raf = 0;
   const animate = () => {
     raf = requestAnimationFrame(animate);
     controls.update();
-    renderer.render(scene, camera);
+    renderFrame();
   };
   animate();
 
@@ -495,16 +517,31 @@ export function mountModelViewer3D(container: HTMLElement, initial: Model): Mode
     setModel,
     setHitboxes,
     setAttachments,
+    setCompare,
+    setHighlight: (tris) => rig.setHighlight(tris),
+    onPick(listener) {
+      pickListeners.add(listener);
+      return () => pickListeners.delete(listener);
+    },
     dispose() {
       disposed = true;
       cancelAnimationFrame(raf);
       ro.disconnect();
+      ctlEvents.abort();
       controls.dispose();
-      discard(built);
+      cmpToken++;
+      dropCompareLooks();
+      primary.dispose();
+      rig.dispose();
+      baseTextures.dispose();
+      pruneExtraSets([]);
+      pickListeners.clear();
+      overlay.remove();
       hitLines.geometry.dispose();
       (hitLines.material as THREE.Material).dispose();
       clearAttachments();
       renderer.dispose();
+      renderer.forceContextLoss();
       renderer.domElement.remove();
     },
   };

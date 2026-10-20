@@ -245,8 +245,13 @@ src/                frontend (Vite + TS puro)
   ui/               detalhe, comparação, auditoria, modal
   lib/mdl-controls.ts  slider -> byte, cache de quadros, plano de material, caixas por quadro do .mdl (puro)
   lib/dict-model.ts    textos do painel do .mdl (entra em `DICT`)
+  lib/skins.ts      família de skin -> textura, projeção UV <-> pixel, hit-test de triângulo UV (puro)
+  lib/dict-skins.ts textos da visualização de skins (entra em `DICT`)
   resources.ts      aba Recursos: barra de animação e painel de controles do .mdl
-  model-viewer.ts   cena própria do .mdl (skinning na CPU, materiais, overlays)
+  model-viewer.ts   cena própria do .mdl (materiais, overlays, comparação de skins, seleção por clique)
+  mdl-rig.ts        geometria do .mdl montada uma vez e reaproveitada por todas as skins (um "look" = jogo de materiais)
+  skin-studio.ts    um único WebGLRenderer compartilhado que desenha as miniaturas 3D das skins
+  ui/skins.ts       faixa de skins: galeria 3D, comparar, equipes; ui/uvmap.ts: mapa UV
 ```
 
 Duas decisões que valem explicação:
@@ -336,6 +341,20 @@ no máximo 48 entradas por modelo aberto. Materiais por textura (`texture_info`)
 escrita de profundidade, *máscara* = `alphaTest`, *flatshade* = normal da face (o resto usa normais suavizadas por
 vértice com corte de aresta a 60°, já que o `.mdl` não é lido com as normais próprias). Partes puras (slider -> byte,
 chave de cache, plano de material, interpolação das caixas) em `src/lib/mdl-controls.ts`, com testes.
+
+**Skins em 3D (faixa abaixo do visualizador).** *Galeria*: uma miniatura 3D girando por família de skin; um único
+`WebGLRenderer` compartilhado (`skin-studio.ts`) desenha cada uma e copia o quadro para um canvas 2D, então o número de
+famílias não cria contextos WebGL (são dois no total: visualizador + miniaturas). A geometria é montada uma vez por modelo
+(`mdl-rig.ts`) e cada skin é só outro jogo de materiais sobre os mesmos buffers: como o `skin_families` do `MdlSummary`
+já diz qual textura substitui qual, trocar de skin não chama `load_model(.., skin = i)` de novo (daria o mesmo `texindex`
+trocado, mas reenviando todos os PNGs). Clicar aplica a skin; Shift+clique define o lado B da comparação.
+*Comparar*: duas skins na mesma cena com a mesma câmera — lado a lado (dois quadros do mesmo canvas, camadas do Three.js) ou
+antes/depois com divisor arrastável. *Equipes* (só se há textura de remap): o mesmo modelo com as cores de time azul
+(140/140) e vermelha (0/0) lado a lado, via `load_model(.., top, bottom)` com cache; são cores de prévia do matiz do
+Half-Life, não uma regra do CS (os jogadores do CS trocam de modelo por time em vez de remapear a cor). *Mapa UV*: a
+textura escolhida com a malha UV por cima (zoom na roda, pan arrastando, xadrez, canal alpha, exportar PNG), lista com
+tamanho e flags de cada textura; passar o mouse num triângulo o realça no mapa e no modelo, e clicar no modelo seleciona
+a textura dele. Partes puras (tabela de skin, projeção UV, acerto de triângulo) em `src/lib/skins.ts`, com testes.
 
 ## Testes
 
