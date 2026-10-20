@@ -49,3 +49,23 @@ pub fn read_checked(path: &Path, exts: &[&str], max_bytes: u64) -> Result<Vec<u8
     check_file(path, exts, max_bytes)?;
     std::fs::read(path).map_err(|e| format!("não leu {}: {e}", path.display()))
 }
+
+/// Aplica `f` a cada item em até 8 threads e devolve os resultados na ordem de entrada.
+/// Serve às varreduras de pasta (auditoria, exportação de contexto): um mapa por vez no pior caso.
+pub fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
+    if items.len() < 2 || workers < 2 {
+        return items.iter().map(&f).collect();
+    }
+    let chunk = items.len().div_ceil(workers);
+    let f = &f;
+    let mut parts: Vec<Vec<R>> = Vec::new();
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = items.chunks(chunk).map(|slice| scope.spawn(move || slice.iter().map(f).collect::<Vec<_>>())).collect();
+        for h in handles {
+            // thread que entrou em pânico: o trecho some; quem chama confere o tamanho se importar
+            parts.push(h.join().unwrap_or_default());
+        }
+    });
+    parts.into_iter().flatten().collect()
+}

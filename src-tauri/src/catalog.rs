@@ -415,8 +415,24 @@ pub fn lump_infos(bsp: &Bsp) -> Vec<LumpInfo> {
 }
 
 pub fn detail(path: &Path, opts: RenderOptions, slots: usize) -> Result<MapDetail, String> {
+    detail_with(path, Some(opts), slots)
+}
+
+/// `detail` sem a planta: `svg` vazio e `polygons` 0. Para quem só quer os dados
+/// (servidor MCP, exportação de contexto) e não paga o desenho.
+pub fn detail_lite(path: &Path, slots: usize) -> Result<MapDetail, String> {
+    detail_with(path, None, slots)
+}
+
+fn detail_with(path: &Path, opts: Option<RenderOptions>, slots: usize) -> Result<MapDetail, String> {
     let Analysis { bsp, ents, summary, findings, resources } = analyze(path, slots)?;
-    let rendered = render::top_down(&bsp, &ents.spawns, opts);
+    let (svg, polygons) = match opts {
+        Some(opts) => {
+            let rendered = render::top_down(&bsp, &ents.spawns, opts);
+            (rendered.svg, rendered.polygons)
+        }
+        None => (String::new(), 0),
+    };
     let extra = extra_summary(&bsp, &entities::parse(&bsp.entities_raw));
 
     let mut textures: Vec<String> = bsp.textures.iter().map(|t| t.name.clone()).collect();
@@ -436,8 +452,8 @@ pub fn detail(path: &Path, opts: RenderOptions, slots: usize) -> Result<MapDetai
         histogram: ents.histogram.clone(),
         lumps: lump_infos(&bsp),
         findings,
-        svg: rendered.svg,
-        polygons: rendered.polygons,
+        svg,
+        polygons,
         resources,
         extra,
     })

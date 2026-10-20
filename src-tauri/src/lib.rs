@@ -1,6 +1,7 @@
 //! Núcleo do bsp-museum: leitura dos formatos do GoldSrc e análise dos mapas.
 //! Sem dependência de interface — é usado pelo app (Tauri) e pelo servidor MCP.
 
+pub mod agentctx;
 pub mod audio;
 pub mod audit;
 pub mod bsp;
@@ -10,6 +11,7 @@ pub mod demo;
 pub mod diagnostics;
 pub mod entity_list;
 pub mod hulls;
+pub mod mcp;
 pub mod mdl;
 pub mod modfiles;
 pub mod nav;

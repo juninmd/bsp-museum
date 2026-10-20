@@ -160,6 +160,14 @@ pub fn texture_names(path: &Path) -> Option<std::sync::Arc<std::collections::Has
 
 /// WADs declarados pelo mapa (+ os do jogo) que existem no disco, só como índice de nomes.
 pub fn declared_name_sets(map_path: &Path, declared: &[String]) -> Vec<std::sync::Arc<std::collections::HashSet<String>>> {
+    declared_named_sets(map_path, declared).into_iter().map(|(_, names)| names).collect()
+}
+
+/// Igual a `declared_name_sets`, mas guardando o nome do WAD de cada índice (nome pedido, não o caminho).
+pub fn declared_named_sets(
+    map_path: &Path,
+    declared: &[String],
+) -> Vec<(String, std::sync::Arc<std::collections::HashSet<String>>)> {
     let mod_dir = mod_dir_of(map_path);
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
@@ -167,7 +175,7 @@ pub fn declared_name_sets(map_path: &Path, declared: &[String]) -> Vec<std::sync
         if let Some(path) = find_asset(&mod_dir, name) {
             if seen.insert(path.clone()) {
                 if let Some(names) = texture_names(&path) {
-                    out.push(names);
+                    out.push((name.to_string(), names));
                 }
             }
         }
