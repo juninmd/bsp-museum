@@ -5,6 +5,8 @@ import { DICT_EXPLORER } from "./dict-explorer.ts";
  * Textos da interface: `[português, inglês]`. `{0}`, `{1}`… são argumentos de `t()`.
  * Uma fonte só para os dois idiomas — chave sem par não passa no teste de paridade.
  */
+import { DICT_VIEWER } from "./dict-viewer.ts";
+
 export const DICT: Record<string, [string, string]> = {
   locale: ["pt-BR", "en-US"],
 
@@ -270,4 +272,6 @@ export const DICT: Record<string, [string, string]> = {
 
   // seção Explorador (arquivos do mod, WAD, sprites, áudio)
   ...DICT_EXPLORER,
+
+  ...DICT_VIEWER,
 };

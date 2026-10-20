@@ -1,4 +1,5 @@
 import type { MdlExtra } from "./types/mdl-extra.ts";
+import type { MapDetailExtra, MeshDetailExtra } from "./types/bsp-extra.ts";
 
 export type GameMode =
   | "bomb"
@@ -86,7 +87,7 @@ export interface LumpInfo {
   percent: number;
 }
 
-export interface MapDetail {
+export interface MapDetail extends MapDetailExtra {
   summary: MapSummary;
   sky: string | null;
   wads: string[];
@@ -185,7 +186,7 @@ export interface MdlSeqFrames {
   data: number[];
 }
 
-export interface MeshDetail {
+export interface MeshDetail extends MeshDetailExtra {
   /** xyz por vértice, 9 floats por triângulo */
   positions: number[];
   /** uv por vértice, 6 floats por triângulo */
