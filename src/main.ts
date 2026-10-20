@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import "./style-explorer.css";
 import { mountModelViewer } from "./resources.ts";
 import { applyStatic, detectLang, getLang, modeLabel, ruleLabel, setLang, t } from "./i18n.ts";
 import {
@@ -19,6 +20,7 @@ import { openAudit } from "./ui/audit.ts";
 import { openCompare } from "./ui/compare.ts";
 import { detailHtml, disposeDetail, wireDetail } from "./ui/detail.ts";
 import { escapeHtml, trapTab } from "./ui/dom.ts";
+import { initExplorer } from "./ui/explorer/index.ts";
 import { initModal, isModalOpen } from "./ui/modal.ts";
 
 const gallery = document.querySelector<HTMLElement>("#gallery")!;
@@ -44,6 +46,8 @@ const closeDrawerBtn = document.querySelector<HTMLButtonElement>("#close-drawer"
 const navMaps = document.querySelector<HTMLButtonElement>("#nav-maps")!;
 const navResources = document.querySelector<HTMLButtonElement>("#nav-resources")!;
 const mapControls = document.querySelector<HTMLElement>("#map-controls")!;
+const navExplorer = document.querySelector<HTMLButtonElement>("#nav-explorer")!;
+const explorerSection = document.querySelector<HTMLElement>("#explorer")!;
 const resourcesSection = document.querySelector<HTMLElement>("#resources")!;
 const resPickBtn = document.querySelector<HTMLButtonElement>("#res-pick")!;
 const resRootLabel = document.querySelector<HTMLElement>("#res-root")!;
@@ -90,6 +94,7 @@ function refreshLanguage() {
   render();
   updateCompareButton();
   if (current && !drawer.hidden) renderCurrentDetail();
+  explorer.refreshLanguage();
 }
 
 // ------------------------------------------------------------------ galeria
@@ -324,17 +329,26 @@ function fillTagFilter() {
 let resViewer: { dispose(): void } | null = null;
 let resRoot = "";
 
-function switchView(view: "maps" | "resources") {
+function switchView(view: "maps" | "resources" | "explorer") {
   const showMaps = view === "maps";
-  navMaps.classList.toggle("active", showMaps);
-  navMaps.setAttribute("aria-pressed", String(showMaps));
-  navResources.classList.toggle("active", !showMaps);
-  navResources.setAttribute("aria-pressed", String(!showMaps));
+  const showRes = view === "resources";
+  const showExplorer = view === "explorer";
+  for (const [btn, on] of [
+    [navMaps, showMaps],
+    [navResources, showRes],
+    [navExplorer, showExplorer],
+  ] as const) {
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-pressed", String(on));
+  }
   mapControls.hidden = !showMaps;
   gallery.hidden = !showMaps;
   statusBar.hidden = !showMaps;
-  resourcesSection.hidden = showMaps;
-  if (showMaps) {
+  resourcesSection.hidden = !showRes;
+  explorerSection.hidden = !showExplorer;
+  if (showExplorer) explorer.show();
+  else explorer.hide();
+  if (!showRes) {
     resViewer?.dispose();
     resViewer = null;
   }
@@ -400,8 +414,14 @@ async function openModel(path: string) {
   }
 }
 
+const explorer = initExplorer(explorerSection, {
+  getLastDir: () => settings.last_dir,
+  gotoResources: () => switchView("resources"),
+});
+
 navMaps.addEventListener("click", () => switchView("maps"));
 navResources.addEventListener("click", () => switchView("resources"));
+navExplorer.addEventListener("click", () => switchView("explorer"));
 
 resPickBtn.addEventListener("click", async () => {
   const dir = await open({ directory: true, multiple: false, title: t("mdl.pickTitle") });

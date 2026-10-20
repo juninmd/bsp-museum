@@ -90,24 +90,13 @@ pub fn find_duplicates(files: &[(String, u64)]) -> Vec<Vec<String>> {
 }
 
 pub fn run(dir: &Path, slots: usize) -> AuditReport {
-    let files = catalog::find_bsp_files(dir);
-    let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
-    let rows: Vec<AuditRow> = if files.len() < 2 || workers < 2 {
-        files.iter().map(|p| audit_one(p, slots)).collect()
-    } else {
-        let chunk = files.len().div_ceil(workers);
-        let mut parts: Vec<Vec<AuditRow>> = Vec::new();
-        std::thread::scope(|scope| {
-            let handles: Vec<_> = files
-                .chunks(chunk)
-                .map(|slice| scope.spawn(move || slice.iter().map(|p| audit_one(p, slots)).collect::<Vec<_>>()))
-                .collect();
-            for h in handles {
-                parts.push(h.join().unwrap_or_default());
-            }
-        });
-        parts.into_iter().flatten().collect()
-    };
+    run_files(dir, catalog::find_bsp_files(dir), slots)
+}
+
+/// Auditoria de uma lista de arquivos já escolhida (`dir` só rotula o relatório).
+/// O servidor MCP filtra os `.bsp` que escapam da raiz permitida antes de chamar.
+pub fn run_files(dir: &Path, files: Vec<std::path::PathBuf>, slots: usize) -> AuditReport {
+    let rows: Vec<AuditRow> = crate::util::par_map(&files, |p| audit_one(p, slots));
     let sizes: Vec<(String, u64)> = rows.iter().map(|r| (r.path.clone(), r.file_size)).collect();
     AuditReport { dir: dir.to_string_lossy().to_string(), slots, duplicates: find_duplicates(&sizes), rows }
 }

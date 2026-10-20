@@ -1,7 +1,12 @@
+import { DICT_MODEL } from "./dict-model.ts";
+import { DICT_EXPLORER } from "./dict-explorer.ts";
+
 /**
  * Textos da interface: `[português, inglês]`. `{0}`, `{1}`… são argumentos de `t()`.
  * Uma fonte só para os dois idiomas — chave sem par não passa no teste de paridade.
  */
+import { DICT_VIEWER } from "./dict-viewer.ts";
+
 export const DICT: Record<string, [string, string]> = {
   locale: ["pt-BR", "en-US"],
 
@@ -243,6 +248,10 @@ export const DICT: Record<string, [string, string]> = {
   "audit.exportMd": ["exportar Markdown", "export Markdown"],
   "audit.exportCsv": ["exportar CSV", "export CSV"],
   "audit.exportHtml": ["exportar HTML", "export HTML"],
+  "audit.exportAgent": ["exportar contexto p/ agentes", "export agent context"],
+  "audit.agentHint": ["gera index.json, REPORT.md, fastdl.txt e AGENTS.md para agentes de IA (veja docs/MCP.md)", "writes index.json, REPORT.md, fastdl.txt and AGENTS.md for AI agents (see docs/MCP.md)"],
+  "audit.agentPick": ["pasta de saída do contexto", "context output folder"],
+  "audit.agentDone": ["contexto de {0} mapas exportado para {1}", "context for {0} maps exported to {1}"],
   "report.title": ["Auditoria do acervo de mapas", "Map collection audit"],
   "report.folder": ["Pasta", "Folder"],
   "report.slots": ["Slots", "Slots"],
@@ -259,4 +268,10 @@ export const DICT: Record<string, [string, string]> = {
   "report.col.rule": ["Regra", "Rule"],
   "report.col.finding": ["Achado", "Finding"],
   "report.col.findings": ["Achados", "Findings"],
+  ...DICT_MODEL,
+
+  // seção Explorador (arquivos do mod, WAD, sprites, áudio)
+  ...DICT_EXPLORER,
+
+  ...DICT_VIEWER,
 };

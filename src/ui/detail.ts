@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { buildChunksAsync } from "../lib/chunker.ts";
+import { withExtraDefaults } from "../lib/mesh-extra.ts";
 import type { Chunk } from "../lib/geometry.ts";
 import { fastdlText, fmtSize } from "../lib/report.ts";
 import { findingText, modeLabel, t } from "../i18n.ts";
@@ -9,6 +10,7 @@ import { normalizeTag } from "../lib/filters.ts";
 import type { EntityRow, Finding, MapDetail, MapSummary, MeshDetail, ResourceItem } from "../types.ts";
 import { mount3D, type Viewer3D } from "../viewer3d.ts";
 import { $, escapeHtml } from "./dom.ts";
+import { createLayersPanel, type LayersPanel } from "./layers.ts";
 
 type ViewMode = "plan" | "3d" | "tex";
 
@@ -33,11 +35,14 @@ function cacheMesh(path: string, entry: { mesh: MeshDetail; chunks: Chunk[] }): 
 }
 
 let activeViewer: Viewer3D | null = null;
+let activePanel: LayersPanel | null = null;
 let cleanup: (() => void) | null = null;
 
 export function disposeDetail(): void {
   cleanup?.();
   cleanup = null;
+  activePanel?.dispose();
+  activePanel = null;
   activeViewer?.dispose();
   activeViewer = null;
 }
@@ -275,6 +280,8 @@ export function wireDetail(root: HTMLElement, d: MapDetail, map: MapSummary, ctx
 
   const setMode = async (next: ViewMode): Promise<void> => {
     const mine = ++seq;
+    activePanel?.dispose();
+    activePanel = null;
     activeViewer?.dispose();
     activeViewer = null;
     planHolder.hidden = next !== "plan";
@@ -293,7 +300,7 @@ export function wireDetail(root: HTMLElement, d: MapDetail, map: MapSummary, ctx
     if (!cached) {
       viewerHolder.innerHTML = `<div class="loading">${escapeHtml(t("viewer.loading"))}</div>`;
       try {
-        const mesh = await invoke<MeshDetail>("map_mesh", { path: d.summary.path });
+        const mesh = withExtraDefaults(await invoke<MeshDetail>("map_mesh", { path: d.summary.path }));
         cached = { mesh, chunks: await buildChunksAsync(mesh) };
         cacheMesh(d.summary.path, cached);
       } catch (err) {
@@ -314,6 +321,7 @@ export function wireDetail(root: HTMLElement, d: MapDetail, map: MapSummary, ctx
     activeViewer.setLightmaps(lmBox.checked);
     activeViewer.setPvs(pvsBox.checked);
     activeViewer.setTransparent(alphaBox.checked);
+    activePanel = createLayersPanel({ holder: viewerHolder, viewer: activeViewer, detail: d, textured: next === "tex" });
     activeViewer.onStats((s) => {
       if (!hud) return;
       const leaf = s.leaf >= 0 ? ` · ${t("viewer.leaf", s.leaf)}` : "";

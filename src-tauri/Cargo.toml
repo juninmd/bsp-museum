@@ -1,16 +1,34 @@
 [package]
 name = "bsp-museum"
-version = "0.6.0"
+version = "0.7.0"
 description = "Galeria navegável do acervo de mapas GoldSrc: planta baixa, entidades e diagnóstico"
 edition = "2021"
 rust-version = "1.77"
+
+[lib]
+name = "bsp_museum_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bsp-museum"
+path = "src/main.rs"
+required-features = ["app"]
+
+[[bin]]
+name = "bsp-museum-mcp"
+path = "src/bin/mcp.rs"
+
+[features]
+default = ["app"]
+# interface gráfica (Tauri). Sem ela só o núcleo e o servidor MCP compilam (sem GTK/WebKit).
+app = ["dep:tauri", "dep:tauri-plugin-dialog"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-dialog = "2"
+tauri = { version = "2", features = [], optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 flate2 = "1"

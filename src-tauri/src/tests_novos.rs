@@ -408,10 +408,10 @@ fn exportacao_so_grava_extensoes_conhecidas() {
     let dir = std::env::temp_dir().join(format!("bspm-export-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let ok = dir.join("relatorio.csv");
-    assert!(crate::export_text(ok.to_string_lossy().to_string(), "a,b".into()).is_ok());
+    assert!(crate::util::export_text(&ok.to_string_lossy(), "a,b").is_ok());
     assert_eq!(std::fs::read_to_string(&ok).unwrap(), "a,b");
     let ruim = dir.join("autostart.bat");
-    assert!(crate::export_text(ruim.to_string_lossy().to_string(), "calc".into()).is_err());
+    assert!(crate::util::export_text(&ruim.to_string_lossy(), "calc").is_err());
     assert!(!ruim.exists());
 }
 
@@ -420,8 +420,8 @@ fn escrita_atomica_substitui_sem_deixar_temporario() {
     let dir = std::env::temp_dir().join(format!("bspm-atomic-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let f = dir.join("settings.json");
-    crate::write_atomic(&f, b"{\"v\":1}").unwrap();
-    crate::write_atomic(&f, b"{\"v\":2}").unwrap();
+    crate::util::write_atomic(&f, b"{\"v\":1}").unwrap();
+    crate::util::write_atomic(&f, b"{\"v\":2}").unwrap();
     assert_eq!(std::fs::read_to_string(&f).unwrap(), "{\"v\":2}");
     assert!(!f.with_extension("tmp").exists());
 }

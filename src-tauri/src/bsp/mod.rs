@@ -1,9 +1,12 @@
 pub mod entities;
+pub mod hull;
 pub mod light;
+pub mod lightstyle;
 pub mod palette;
 pub mod reader;
 pub mod render;
 pub mod sky;
+pub mod texanim;
 pub mod tree;
 pub mod wad;
 
@@ -28,6 +31,7 @@ pub const LUMP_NODES: usize = 5;
 pub const LUMP_TEXINFO: usize = 6;
 pub const LUMP_FACES: usize = 7;
 pub const LUMP_LIGHTING: usize = 8;
+pub const LUMP_CLIPNODES: usize = 9;
 pub const LUMP_LEAVES: usize = 10;
 pub const LUMP_MARKSURFACES: usize = 11;
 pub const LUMP_EDGES: usize = 12;
@@ -83,6 +87,14 @@ pub struct Node {
     pub children: [i16; 2],
 }
 
+/// Nó de colisão (`dclipnode_t`): como o nó visual, mas os filhos `< 0` são o próprio
+/// `contents` (`-1` vazio, `-2` sólido…), não um índice de folha.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct ClipNode {
+    pub plane: i32,
+    pub children: [i16; 2],
+}
+
 /// Folha da árvore BSP (`dleaf_t`).
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct Leaf {
@@ -110,6 +122,8 @@ pub struct Model {
     pub origin: [f32; 3],
     /// raiz da árvore do hull 0 (visual) — de onde se classifica um ponto
     pub headnode: i32,
+    /// raízes (índices em `clipnodes`) dos hulls de colisão 1, 2 e 3 (`headnode[1..4]`)
+    pub hull_heads: [i32; 3],
     /// folhas visíveis do modelo (define o tamanho da linha de PVS)
     pub visleafs: i32,
     pub first_face: i32,
@@ -139,6 +153,8 @@ pub struct Bsp {
     pub models: Vec<Model>,
     pub planes: Vec<Plane>,
     pub nodes: Vec<Node>,
+    /// árvore dos hulls de colisão (lump 9)
+    pub clipnodes: Vec<ClipNode>,
     pub leaves: Vec<Leaf>,
     pub marksurfaces: Vec<u16>,
     /// lump de visibilidade (PVS comprimido por RLE de zeros)
@@ -262,6 +278,7 @@ impl Bsp {
         // arquivo com um deles torto ainda abre (planta e 3D seguem funcionando).
         let planes = read_planes(data, lumps[LUMP_PLANES]).unwrap_or_default();
         let nodes = read_nodes(data, lumps[LUMP_NODES]).unwrap_or_default();
+        let clipnodes = read_clipnodes(data, lumps[LUMP_CLIPNODES]).unwrap_or_default();
         let leaves = read_leaves(data, lumps[LUMP_LEAVES]).unwrap_or_default();
         let marksurfaces = read_marksurfaces(data, lumps[LUMP_MARKSURFACES]).unwrap_or_default();
         let visibility = lump_slice(data, lumps[LUMP_VISIBILITY], "visibility").map(<[u8]>::to_vec).unwrap_or_default();
@@ -283,6 +300,7 @@ impl Bsp {
             models,
             planes,
             nodes,
+            clipnodes,
             leaves,
             marksurfaces,
             visibility,
@@ -345,11 +363,11 @@ fn read_models(data: &[u8], lump: Lump) -> Result<Vec<Model>> {
         let maxs = cur.vec3()?;
         let origin = cur.vec3()?;
         let headnode = cur.i32()?; // headnode[0]: hull visual
-        cur.skip(12)?; // headnode[1..4]: hulls de colisão
+        let hull_heads = [cur.i32()?, cur.i32()?, cur.i32()?]; // headnode[1..4]: hulls de colisão
         let visleafs = cur.i32()?;
         let first_face = cur.i32()?;
         let num_faces = cur.i32()?;
-        models.push(Model { mins, maxs, origin, headnode, visleafs, first_face, num_faces });
+        models.push(Model { mins, maxs, origin, headnode, hull_heads, visleafs, first_face, num_faces });
     }
     Ok(models)
 }
@@ -377,6 +395,17 @@ fn read_nodes(data: &[u8], lump: Lump) -> Result<Vec<Node>> {
         cur.skip(12)?; // mins[3], maxs[3] (i16)
         cur.skip(4)?; // firstface, numfaces
         out.push(Node { plane, children });
+    }
+    Ok(out)
+}
+
+fn read_clipnodes(data: &[u8], lump: Lump) -> Result<Vec<ClipNode>> {
+    let count = check_stride(lump, "clipnodes", 8)?;
+    let mut cur = Cursor::new(lump_slice(data, lump, "clipnodes")?);
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        let plane = cur.i32()?;
+        out.push(ClipNode { plane, children: [cur.i16()?, cur.i16()?] });
     }
     Ok(out)
 }

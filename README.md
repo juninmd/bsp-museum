@@ -38,6 +38,32 @@ Precisa de Rust (MSVC no Windows) e do WebView2 — que já vem no Windows 11. N
 Na primeira execução, clique em **escolher pasta…** e aponte para a pasta com os `.bsp`
 (subpastas incluídas). A escolha fica salva para a próxima abertura.
 
+## Novidades da v0.7
+
+> Tudo abaixo foi escrito a partir do SDK/Xash3D e testado com arquivos **sintéticos**; nenhum arquivo da
+> Valve passou pelo código. Os pontos de formato não conferidos contra o jogo estão em
+> [Limitações](#limitações) e em `REFERENCES.md`.
+
+- **Vista 3D**: render modes (aditivo, transparência, cor), texturas `scroll*` e animadas (`+0nome`),
+  lightstyles animados, hulls de colisão, volumes/zonas (triggers, buyzone, bomb target…), luzes, sprites
+  (`env_sprite`), sons ambientes, decals, névoa, sol, portas/plataformas/trens animados — ver o painel
+  [Camadas](#vista-3d-painel-camadas-v07).
+- **Explorador** (nova seção): arquivos do mod (mod/valve/`.pak`) com visualizador por tipo; navegador de
+  **WAD** (grade de texturas, mips, PNG, quais mapas usam); player de **sprites** `.spr`; **áudio** com
+  forma de onda e loop; `.nav`, `.dem`, `liblist.gam`, `hud.txt`, `_detail.txt`, `mapcycle.txt`.
+- **`.mdl` completo**: bodygroups, bone controllers, blends, cores de time, chrome/aditivo/masked,
+  hitboxes, attachments, eventos.
+- **Servidor MCP + exportação para agentes** (`bsp-museum-mcp`): 24 ferramentas somente leitura sobre mapas,
+  WADs, sprites, modelos e arquivos do mod, mais `export-context` (`index.json`, `REPORT.md`, `fastdl.txt`,
+  `AGENTS.md`). Também há o botão **exportar contexto p/ agentes** na auditoria. Detalhes em
+  [`docs/MCP.md`](docs/MCP.md).
+
+```bash
+cd src-tauri
+cargo build --release --no-default-features --bin bsp-museum-mcp   # sem GTK/WebKit
+claude mcp add bsp-museum -- ./target/release/bsp-museum-mcp serve --root /caminho/cstrike
+```
+
 ## Novidades da v0.6
 
 > Capturas geradas pelo próprio app a partir de um mapa **sintético** (montado byte a byte nos
@@ -121,6 +147,30 @@ Space/Ctrl sobe/desce, Shift corre, Esc sai. A vista é orbitável (arraste gire
 Nos mapas `cs_` sem zona de resgate explícita (`func_/info_hostage_rescue`) o aviso é só informativo:
 o GoldSrc resgata o refém perto de qualquer spawn de CT (fallback oficial).
 
+### Vista 3D: painel "Camadas" (v0.7)
+
+Botão **Camadas** no canto do viewer. Cada grupo só aparece se o mapa tem o que mostrar:
+
+- **Superfície** — modos de render das brush entities (`rendermode`/`renderamt`/`rendercolor`/`renderfx`:
+  aditivo, translúcido, cor, alpha-test, pulso e strobe), texturas `scroll*` (esteira/água) com a velocidade do
+  backend, texturas animadas `+0…+9` (10 quadros/s; o botão alterna para a sequência `+A…+J`) e **luz animada**:
+  os lightstyles (`a`..`z` a 10 Hz) somam as camadas do lightmap num shader, e o estilo 0 sai igual ao de sempre.
+- **Colisão (hulls)** — botões 1/2/3. O hull vem em janelas (`map_hulls` paginado por `next_offset`), com barra de
+  progresso e tetos de segurança (400 mil triângulos, 12 janelas), desenhado em aramado + translúcido por cima.
+- **Volumes e zonas** — gatilhos, buyzone, alvo da bomba, resgate, VIP, fuga, escada, água e superfícies
+  invisíveis (`clip`, `aaatrigger`…); a legenda liga/desliga cada categoria e o mouse mostra `message`/`target`.
+- **Cena** — luzes (cor e estilo; as ligáveis alternam ao clicar), `env_sprite`/`env_glow` (o `.spr` é lido com
+  `load_sprite`, com o `tex_format` e o modo de render), sons ambientes (clique: arquivo e raio), decalques, rotas de
+  trem, **animar portas, plataformas e trens** (vai-e-vem entre a posição inicial e a final), névoa (`env_fog`),
+  sol (`light_environment`, no sombreado do modo sem textura) e céu.
+
+| camadas (hull 1, volumes, luzes, sprite, som, decalque) | luz animada | luz estática |
+|---|---|---|
+| ![painel de camadas](prints/v7-3d-camadas.png) | ![luz animada](prints/v7-3d-luz-animada.png) | ![luz estática](prints/v7-3d-luz-estatica.png) |
+
+> Capturas do mapa sintético dos recursos extras (`fixture_extra.rs`), com as texturas de 8×8 do fixture: o chão tem
+> o bloco de luz vermelho do estilo 0 e um bloco verde no estilo 1 — à direita só o estático, ao meio a soma.
+
 ### `de_dust2` no bsp-museum
 
 Planta baixa (chão + paredes + spawns) e vista 3D (cor por altura) do mapa clássico,
@@ -176,9 +226,15 @@ src-tauri/src/
   compare.rs        comparação lado a lado de dois mapas
   entity_list.rs    entidades com posição para o painel clicável
   radar.rs          radar verde (PNG/BMP + overview .txt)
-  mdl/mod.rs        parser de modelo `.mdl` (GoldSrc studiomodel v10) — pose de repouso
+  mdl/mod.rs        parser de modelo `.mdl` (GoldSrc studiomodel v10) — pose, animação, blends, controladores, bodygroups
+  mdl/extra.rs      metadados: controladores, bodyparts, flags de material, remap de cor, hitboxes, attachments, eventos
+  mdl/files.rs      arquivos irmãos na pasta do modelo: `nomeT.mdl` (texturas) e `nome01.mdl` (sequências)
   catalog.rs        varredura, diagnóstico, montagem do detalhe, da malha 3D e do visualizador avulso de .mdl
-  main.rs           comandos Tauri, cache e settings
+  main.rs           comandos Tauri, cache e settings (só com a feature `app`)
+  lib.rs            núcleo sem interface (usado pelo app e pelo servidor MCP)
+  mcp/, bin/mcp.rs  servidor MCP stdio; agentctx.rs exporta o contexto para agentes
+  spr.rs wadlist.rs image.rs audio.rs pak.rs modfiles.rs nav.rs demo.rs textfiles.rs  formatos do Explorador
+  hulls.rs volumes.rs scene.rs bsp/lightstyle.rs bsp/texanim.rs  recursos extras do mapa
 src/                frontend (Vite + TS puro)
   viewer3d.ts       cena Three.js: chunks, lightmap, PVS, frustum, foco em entidade
   lib/geometry.ts   malha -> chunks (puro; roda no Web Worker e nos testes)
@@ -187,8 +243,10 @@ src/                frontend (Vite + TS puro)
   lib/report.ts     relatório de auditoria (MD/CSV/HTML) e lista de FastDL (puro)
   i18n.ts           pt/en (`lib/dict.ts`, `lib/findings-en.ts`)
   ui/               detalhe, comparação, auditoria, modal
-  resources.ts      aba Recursos: barra de animação do .mdl
-  model-viewer.ts   cena própria do .mdl (skinning na CPU)
+  lib/mdl-controls.ts  slider -> byte, cache de quadros, plano de material, caixas por quadro do .mdl (puro)
+  lib/dict-model.ts    textos do painel do .mdl (entra em `DICT`)
+  resources.ts      aba Recursos: barra de animação e painel de controles do .mdl
+  model-viewer.ts   cena própria do .mdl (skinning na CPU, materiais, overlays)
 ```
 
 Duas decisões que valem explicação:
@@ -212,7 +270,7 @@ Textura com offset de pixel `0` vem de WAD externo; diferente de `0` está embut
 diferença que alimenta o aviso de WAD não declarado.
 
 Faces com textura `aaatrigger`, `clip`, `null`, `origin`, `hint`, `skip` e `sky` são volumes
-invisíveis e **não entram na planta** — sem esse filtro, o desenho vira um borrão de caixas de
+invisíveis e **não entram na planta** nem na malha visual (o módulo `volumes` as devolve à parte) — sem esse filtro, o desenho vira um borrão de caixas de
 clip.
 
 O índice `255` da paleta de 256 cores só é buraco (transparência) em textura cujo nome começa com
@@ -238,10 +296,52 @@ velocidade; sequências em `nome01.mdl` (grupo externo) são lidas da mesma past
 (`skinref`) aparecem num seletor quando há mais de uma. A composição de rotação segue `AngleQuaternion`
 do SDK e é coberta por teste contra uma matriz de Euler independente; o `.mdl` de teste é sintético.
 
+**Extras (contrato em `src/types/mdl-extra.ts`).** Tudo entra como campo novo e opcional no `MdlSummary`/`SeqFrames`;
+as chamadas antigas continuam iguais. O painel ao lado da cena (Recursos) usa todos eles — ver *Painel de controles* abaixo.
+
+- *Bone controllers* (`controllers`): olhar/mira (slots 0..3) e boca (slot 4), com tipo, faixa e byte de
+  repouso para montar sliders; `load_sequence(.., controllers)` aplica `StudioCalcBoneAdj` do SDK.
+- *Blends* (`blend`): 2 e 4 blends como no SDK (`StudioSetupBones`); outros N (as sequências de mira/marcha do
+  jogador, 9) usam uma extensão **não conferida contra o motor** (grade 3x3 ou eixo único).
+  `seq_details[i].blend_*` traz o eixo e a faixa em graus de cada blender.
+- *Bodygroups* (`bodyparts`, `load_model(.., body)`): um submodel por bodypart, `(body / base) % nummodels`.
+- *Skin e cor de time* (`load_model(.., skin, top, bottom)`): texturas `DM_Base*` e `Remap?_TTT_UUU_BBB` têm a
+  faixa de cima (160..191 em `DM_Base`) e a de baixo (192..223) refeitas com o matiz 0..255, regra do Xash3D.
+- *Material* (`texture_info`): flatshade, chrome (UV por reflexão), fullbright, aditivo e máscara por textura.
+- *Hitboxes, attachments e eventos*: em repouso no `MdlSummary` e por quadro em `load_sequence`
+  (`attachments`, `hitboxes` com a flag); eventos com o nome dos IDs conhecidos (5001/5011/5021/5031 flash,
+  5002 faísca, 5004 som, 1000..1010 script).
+- *Texturas externas* (`nomeT.mdl`) e grupos de sequência (`nome01.mdl`) são achados na pasta do modelo, sem
+  diferenciar maiúsculas; o mesmo vale para props do mapa.
+
+**Painel de controles (aba Recursos).** Só aparecem as seções que o modelo tem:
+
+- *Bodygroups*: um seletor por bodypart (`bodyValue`); trocar recarrega o modelo (`load_model(path, body, top, bottom)`) sem mexer na câmera.
+- *Cores de time*: matiz 0..255 de cima e de baixo (amostra do matiz; clicar nela volta à cor do modelo), só em modelo com
+  textura de remap; a textura recolorida vem do backend.
+- *Controladores*: um slider por bone controller (olhar/mira e boca). O slider anda em **bytes** (0..`input_max`) e o rótulo
+  mostra o valor real em graus/unidades (`controllerValue`, espelho de `ControllerInfo::value_for`). Com todos no repouso
+  o `load_sequence` vai sem `controllers` (mesma pose e mesma chave de cache de antes).
+- *Blends*: 1 ou 2 sliders conforme `seq_details[i].blend_*` (o 9-blend do jogador usa 2 eixos); começam no zero da faixa
+  quando ela o cruza (mira reta).
+- *Sobreposições*: hitboxes (12 arestas por caixa, cor por grupo, interpoladas por quadro) e attachments (cruz + nome),
+  ambas desenhadas por cima da malha. As caixas por quadro só são pedidas (`hitboxes: true`) com o overlay ligado.
+- *Eventos* da sequência atual: lista com o quadro (clicar vai ao quadro) e um marcador na barra do tempo; o evento do
+  quadro atual fica destacado. *Avisos* do modelo (`warnings`) e o aviso de textura externa ficam numa seção discreta.
+
+Mexer num slider de controlador/blend recarrega só os quadros da sequência (`load_sequence`, com *debounce* de 120 ms no
+arrasto, mantendo o quadro e o tocar/pausar); os quadros ficam em cache por (sequência, blend, controladores, hitboxes),
+no máximo 48 entradas por modelo aberto. Materiais por textura (`texture_info`): *chrome* = matcap com a própria textura
+(aproximação da reflexão do motor, sem o UV por pixel), *fullbright* = sem iluminação, *aditivo* = mistura aditiva sem
+escrita de profundidade, *máscara* = `alphaTest`, *flatshade* = normal da face (o resto usa normais suavizadas por
+vértice com corte de aresta a 60°, já que o `.mdl` não é lido com as normais próprias). Partes puras (slider -> byte,
+chave de cache, plano de material, interpolação das caixas) em `src/lib/mdl-controls.ts`, com testes.
+
 ## Testes
 
 ```bash
 cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
+cargo test --no-default-features       # núcleo + MCP, sem GTK/WebKit
 bun run typecheck && bun test        # filtros, PVS, geometria, i18n (paridade pt/en), relatórios
 ```
 
@@ -256,6 +356,7 @@ panic), e cada regra do diagnóstico.
 ```bash
 export FIXTURE_DIR=/tmp/museu
 (cd src-tauri && cargo test gerar_dados_das_capturas -- --ignored)   # mapas sintéticos + JSON do backend
+(cd src-tauri && cargo test gerar_dados_extras_das_capturas -- --ignored)   # mapa dos recursos extras (v7-*)
 bun run build
 node scripts/screenshots.mjs $FIXTURE_DIR prints                      # precisa de `playwright`
 ```
@@ -271,10 +372,13 @@ JSON gerados pelo backend em Rust (WebGL via SwiftShader).
 - A vista 3D mostra as texturas embutidas no BSP **e** as dos WADs, mas precisa que os `.wad`
   estejam na pasta do mod (mesma de onde o mapa foi aberto) e que o `skyname` exista em
   `gfx/env`. Sem isso, entra cor neutra / domo de reserva.
-- `.mdl`: animação usa só o blend 0 de cada sequência, não aplica *bone controllers* e a regra de
-  `motiontype` (zerar a translação do bone de movimento) foi escrita de memória do SDK, sem conferir contra
-  um arquivo real; skin de time por *remap* (tinta de cima/baixo) não está implementada. Sprites (`.spr`)
-  só entram na lista de recursos, não são desenhados.
+- `.mdl`: o `motiontype` (`STUDIO_X/Y/Z` zeram a translação do bone de movimento) foi conferido no
+  `StudioCalcRotations` do SDK, mas nenhum `.mdl` real passou pelo parser (só modelos sintéticos); `STUDIO_LX/LY/LZ`
+  não fazem nada porque o próprio SDK multiplica o deslocamento por 0. Blends além de 2 e 4 (os 9 do jogador),
+  o remap de cor (regra do Xash3D, não do `hw.dll`) e o nome de eventos fora do SDK não foram conferidos contra
+  o jogo. Pivôs, `automove` e grafo de transição de sequências não são lidos. O frontend ainda não usa os
+  controladores, bodygroups, remap e hitboxes (só o backend e o contrato de tipos estão prontos). Sprites
+  (`.spr`) só entram na lista de recursos, não são desenhados.
 - Props `.mdl` dentro do mapa continuam em pose de repouso.
 - Só entram na vista 3D do mapa entidades com `model` **explícito** no BSP — armas/itens que o
   jogo injeta por conta própria (sem essa chave) não têm como ser resolvidos só com o que está no
@@ -282,7 +386,24 @@ JSON gerados pelo backend em Rust (WebGL via SwiftShader).
 - A conferência de WAD olha só o índice de nomes do arquivo (`textura-ausente`), não valida os pixels.
 - Radar: o `ZOOM` do `overviews/<mapa>.txt` é uma estimativa para o enquadramento gerado; o calibre exato
   no cliente do CS não foi conferido contra o jogo — ajuste à mão se o radar desalinhar.
-- Lightmaps: só o estilo 0 (luz estática); estilos animados (piscar, pulsar) não são aplicados.
+- Estilos de luz: o backend entrega os 4 slots de estilo de cada face (atlas principal + camadas) e os padrões
+  (`m`, flicker, pulso…, os de fábrica de memória do `world.cpp` do SDK, sem conferir contra o motor); somar as
+  camadas com os multiplicadores animados é feito por um shader do viewer (`MeshBasicMaterial` + `onBeforeCompile`).
+  Luz ligável (estilo 32+) começa no estado do `spawnflags`; quem a liga é o gatilho, que o app não simula — no
+  viewer, clicar na esfera da luz alterna o estilo.
+- Vista 3D (camadas): a animação dos movers é uma demonstração em vai-e-vem (o jogo depende de gatilhos); sprites
+  são sempre voltados para a câmera (os tipos `oriented` não são respeitados); o sol só afeta o sombreado do modo
+  sem textura (o modo texturizado usa o lightmap); `renderamt` ausente vale 0, como informa o backend, e uma brush
+  entity translúcida com 0 some; `renderfx` além de pulso, strobe e tremer não anima. Nada disso foi conferido
+  contra o jogo, só contra o código do HLSDK de memória.
+- Hulls de colisão (`headnode[1..3]`) saem como malha por varredura da árvore de clipnodes. Os tamanhos dos hulls
+  (em pé ±16×±16×±36, grande ±32, agachado ±16×±16×±18) e a regra "só `contents == -2` é sólido" vêm de memória
+  do SDK; nenhum mapa real foi usado para conferir. Hull de brush entity só sai pedindo o modelo.
+- Zonas/volumes: só aparecem brush entities (`model "*N"`) e faces que o compilador guardou — `clip`/`null`/`hint`/
+  `skip` costumam ser descartados na compilação, então o clip de verdade só se vê pelo hull.
+- Texturas animadas: 10 quadros/s e a alternativa `+A…J` ligada por botão seguem o código do Quake; no GoldSrc não
+  foi conferido. Rolagem `scroll*` (regra do `rendercolor`/`func_conveyor`) e fórmulas de porta/botão/plataforma
+  (`lip`, eixo de rotação, deslocamento) foram escritas de memória do HLSDK — a VDC bloqueou a consulta automática.
 - O brilho do lightmap usa fator fixo 2× (convenção *overbright* do Quake); não há gama configurável.
 - Limites do motor (`limite-motor`) são valores de referência do compilador/engine, não lidos do jogo.
 - Atualização automática (`tauri-plugin-updater`) não está ligada: exige par de chaves de assinatura e um

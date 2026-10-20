@@ -16,9 +16,26 @@ export function inputFromMesh(mesh: MeshDetail): { input: MeshInput; cellSize: n
       triFace: mesh.tri_face,
       zMin,
       zMax,
+      faceModel: faceModelOf(mesh),
+      faceStyles: mesh.face_styles?.length ? Uint8Array.from(mesh.face_styles) : undefined,
     },
     cellSize: cellSizeFor(extent),
   };
+}
+
+/** Modelo (brush entity) de cada face do BSP: 0 = mundo. Vazio se o mapa não tem brush entity. */
+export function faceModelOf(mesh: MeshDetail): Int32Array | undefined {
+  const models = mesh.brush_models;
+  if (!models?.length) return undefined;
+  let maxFace = -1;
+  for (const f of mesh.tri_face) if (f > maxFace) maxFace = f;
+  for (const m of models) maxFace = Math.max(maxFace, m.first_face + m.num_faces - 1);
+  const out = new Int32Array(maxFace + 1);
+  for (const m of models) {
+    const end = Math.min(m.first_face + m.num_faces, out.length);
+    for (let f = Math.max(0, m.first_face); f < end; f++) out[f] = m.model;
+  }
+  return out;
 }
 
 let worker: Worker | null = null;

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "bsp-museum": {
+      "command": "/caminho/para/bsp-museum-mcp",
+      "args": ["serve", "--root", "/caminho/para/cstrike"],
+      "env": {}
+    }
+  }
+}

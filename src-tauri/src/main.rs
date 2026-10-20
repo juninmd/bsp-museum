@@ -1,21 +1,8 @@
 // Sem console extra no Windows quando roda em release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod audit;
-mod bsp;
-mod catalog;
-mod compare;
-mod diagnostics;
-mod entity_list;
-mod mdl;
-mod radar;
-mod resources;
-#[cfg(test)]
-mod fixture;
-#[cfg(test)]
-mod tests;
-#[cfg(test)]
-mod tests_novos;
+use bsp_museum_core::util::{self, write_atomic};
+use bsp_museum_core::{agentctx, audio, audit, bsp, catalog, compare, entity_list, hulls, image, mdl, modfiles, radar, scene, spr, volumes, wadlist};
 
 use catalog::{MapDetail, MapSummary};
 use serde::{Deserialize, Serialize};
@@ -90,14 +77,6 @@ fn cache_key(path: &Path) -> String {
         }
     }
     format!("{:016x}", hasher.finish())
-}
-
-/// Grava por arquivo temporário + renomeação: queda no meio da escrita não deixa o arquivo
-/// pela metade (o `settings.json` guarda favoritos e notas do usuário).
-fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, data)?;
-    std::fs::rename(&tmp, path)
 }
 
 /// Roda trabalho pesado fora da thread da UI: sem isso a janela congela durante
@@ -178,6 +157,33 @@ async fn map_entities(path: String) -> Result<Vec<entity_list::EntityRow>, Strin
     .await?
 }
 
+#[tauri::command]
+async fn map_hulls(
+    path: String,
+    hull: usize,
+    model: Option<usize>,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<hulls::HullMesh, String> {
+    blocking(move || {
+        hulls::hull_mesh_with(
+            &PathBuf::from(path),
+            hulls::HullQuery { hull, model: model.unwrap_or(0), offset: offset.unwrap_or(0), limit: limit.unwrap_or(200_000) },
+        )
+    })
+    .await?
+}
+
+#[tauri::command]
+async fn map_volumes(path: String) -> Result<volumes::VolumeReport, String> {
+    blocking(move || volumes::volumes(&PathBuf::from(path))).await?
+}
+
+#[tauri::command]
+async fn map_scene(path: String) -> Result<scene::SceneEntities, String> {
+    blocking(move || scene::scene_of(&PathBuf::from(path))).await?
+}
+
 /// Auditoria da pasta inteira (diagnóstico completo + duplicados).
 #[tauri::command]
 async fn audit_folder(dir: String, slots: usize) -> Result<audit::AuditReport, String> {
@@ -186,6 +192,16 @@ async fn audit_folder(dir: String, slots: usize) -> Result<audit::AuditReport, S
         return Err(format!("não é uma pasta: {dir}"));
     }
     blocking(move || audit::run(&path, slots.max(2))).await
+}
+
+/// Exporta o acervo como contexto para agentes (index.json, REPORT.md, fastdl.txt, AGENTS.md).
+#[tauri::command]
+async fn export_agent_context(dir: String, out: String, slots: usize) -> Result<agentctx::ExportSummary, String> {
+    let dir = PathBuf::from(dir);
+    if !dir.is_dir() {
+        return Err(format!("não é uma pasta: {}", dir.display()));
+    }
+    blocking(move || agentctx::export(&dir, &PathBuf::from(out), slots.max(2))).await?
 }
 
 #[tauri::command]
@@ -236,14 +252,7 @@ async fn export_radar(path: String, out_dir: String) -> Result<Vec<String>, Stri
 /// Grava um arquivo de texto (planta SVG, relatório de auditoria, lista de FastDL).
 #[tauri::command(async)]
 fn export_text(target: String, content: String) -> Result<(), String> {
-    // o frontend só exporta estes formatos; recusar o resto limita o estrago se algum
-    // texto de mapa hostil conseguir injetar script no WebView
-    const ALLOWED: [&str; 6] = ["svg", "txt", "csv", "md", "html", "json"];
-    let ext = Path::new(&target).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
-    if !ext.as_deref().is_some_and(|e| ALLOWED.contains(&e)) {
-        return Err(format!("extensão não permitida para exportação: {target}"));
-    }
-    std::fs::write(&target, content).map_err(|e| format!("não gravou {target}: {e}"))
+    util::export_text(&target, &content)
 }
 
 #[tauri::command(async)]
@@ -261,13 +270,113 @@ fn list_models(dir: String) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command(async)]
-fn load_model(path: String) -> Result<catalog::MdlSummary, String> {
-    catalog::load_model(&PathBuf::from(path))
+fn load_model(
+    path: String,
+    body: Option<u32>,
+    skin: Option<u32>,
+    top: Option<u8>,
+    bottom: Option<u8>,
+) -> Result<catalog::MdlSummary, String> {
+    catalog::load_model_ex(&PathBuf::from(path), body, skin, top, bottom)
 }
 
 #[tauri::command(async)]
-fn load_sequence(path: String, index: usize) -> Result<mdl::SeqFrames, String> {
-    catalog::load_sequence(&PathBuf::from(path), index)
+fn load_sequence(
+    path: String,
+    index: usize,
+    blend: Option<[u8; 2]>,
+    controllers: Option<[u8; 5]>,
+    hitboxes: Option<bool>,
+) -> Result<mdl::SeqFrames, String> {
+    catalog::load_sequence_ex(&PathBuf::from(path), index, blend, controllers, hitboxes.unwrap_or(false))
+}
+
+#[tauri::command(async)]
+fn load_sprite(path: String) -> Result<spr::SpriteInfo, String> {
+    spr::load_sprite(&PathBuf::from(path))
+}
+
+#[tauri::command(async)]
+fn list_wad(path: String) -> Result<wadlist::WadListing, String> {
+    wadlist::list_wad(&PathBuf::from(path))
+}
+
+#[tauri::command(async)]
+fn wad_texture(path: String, name: String, with_mips: Option<bool>) -> Result<wadlist::WadTexture, String> {
+    wadlist::wad_texture(&PathBuf::from(path), &name, with_mips.unwrap_or(false))
+}
+
+#[tauri::command]
+async fn wad_usage(wad_path: String, maps_dir: String) -> Result<wadlist::WadUsage, String> {
+    blocking(move || wadlist::wad_usage(&PathBuf::from(wad_path), &PathBuf::from(maps_dir))).await?
+}
+
+#[tauri::command(async)]
+fn load_image(path: String) -> Result<image::ImageInfo, String> {
+    image::load_image(&PathBuf::from(path))
+}
+
+fn origin_of(origin: Option<String>) -> Option<modfiles::Root> {
+    match origin.as_deref() {
+        Some("mod") => Some(modfiles::Root::Mod),
+        Some("valve") => Some(modfiles::Root::Valve),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+async fn list_mod_files(
+    mod_root: String,
+    valve_root: Option<String>,
+    include_paks: Option<bool>,
+    max_entries: Option<usize>,
+) -> Result<modfiles::ModListing, String> {
+    blocking(move || {
+        let valve = valve_root.map(PathBuf::from);
+        let mut opts = modfiles::ListOptions::default();
+        if let Some(v) = include_paks {
+            opts.include_paks = v;
+        }
+        if let Some(v) = max_entries {
+            opts.max_entries = v;
+        }
+        modfiles::list_mod_files(&PathBuf::from(mod_root), valve.as_deref(), &opts)
+    })
+    .await?
+}
+
+#[tauri::command(async)]
+fn read_mod_file(
+    mod_root: String,
+    valve_root: Option<String>,
+    rel: String,
+    max_bytes: usize,
+    origin: Option<String>,
+) -> Result<modfiles::FilePreview, String> {
+    let valve = valve_root.map(PathBuf::from);
+    modfiles::read_mod_file_in(&PathBuf::from(mod_root), valve.as_deref(), &rel, max_bytes, origin_of(origin))
+}
+
+#[tauri::command(async)]
+fn analyze_mod_file(
+    mod_root: String,
+    valve_root: Option<String>,
+    rel: String,
+    origin: Option<String>,
+) -> Result<modfiles::ModFileAnalysis, String> {
+    let valve = valve_root.map(PathBuf::from);
+    modfiles::ModRoots::new(&PathBuf::from(mod_root), valve.as_deref())?.analyze(&rel, origin_of(origin))
+}
+
+#[tauri::command(async)]
+fn read_mod_audio(
+    mod_root: String,
+    valve_root: Option<String>,
+    rel: String,
+    origin: Option<String>,
+) -> Result<audio::AudioData, String> {
+    let valve = valve_root.map(PathBuf::from);
+    modfiles::ModRoots::new(&PathBuf::from(mod_root), valve.as_deref())?.read_audio(&rel, origin_of(origin))
 }
 
 #[tauri::command(async)]
@@ -330,8 +439,12 @@ fn main() {
             map_detail,
             map_mesh,
             map_entities,
+            map_hulls,
+            map_volumes,
+            map_scene,
             audit_folder,
             compare_maps,
+            export_agent_context,
             map_radar,
             export_radar,
             export_text,
@@ -339,6 +452,15 @@ fn main() {
             list_models,
             load_model,
             load_sequence,
+            load_sprite,
+            list_wad,
+            wad_texture,
+            wad_usage,
+            load_image,
+            list_mod_files,
+            read_mod_file,
+            analyze_mod_file,
+            read_mod_audio,
             load_settings,
             save_settings,
             clear_cache
