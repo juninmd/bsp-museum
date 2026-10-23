@@ -38,6 +38,38 @@ Precisa de Rust (MSVC no Windows) e do WebView2 — que já vem no Windows 11. N
 Na primeira execução, clique em **escolher pasta…** e aponte para a pasta com os `.bsp`
 (subpastas incluídas). A escolha fica salva para a próxima abertura.
 
+Para só ver o app no navegador (sem Tauri; os comandos do backend não respondem): `bun run dev` serve em
+`http://localhost:1420` (porta fixa, `strictPort`). `bun run build` faz typecheck e gera `dist/`.
+
+## Requisitos
+
+- [Bun](https://bun.sh) (gerenciador de pacotes e runner de testes; o CI usa a versão estável mais recente — não há versão fixada).
+- Rust estável, MSRV `1.77` (`src-tauri/Cargo.toml`); no Windows, toolchain MSVC e WebView2.
+- Linux: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libsoup-3.0-dev`, `libjavascriptcoregtk-4.1-dev`, `librsvg2-dev`.
+- Só para refazer as capturas de tela: Node e `playwright` (ver [Testes](#testes)).
+
+O servidor MCP (`bsp-museum-mcp`) compila sem GTK/WebKit com `--no-default-features`.
+
+## Configuração
+
+O app não lê variáveis de ambiente; a pasta de mapas e as anotações ficam no `settings.json` do app. As
+variáveis abaixo valem para o servidor MCP e para o script de capturas (detalhes em [`docs/MCP.md`](docs/MCP.md)):
+
+| variável | uso |
+|---|---|
+| `BSP_MUSEUM_ROOTS` | raízes extras do servidor MCP, separadas por `:` ou `;` (soma-se aos `--root`) |
+| `BSP_MUSEUM_ALLOW_WRITE` | `1` = mesmo que `--allow-write` (deixa `map_radar` gravar `overviews/`) |
+| `BSP_MUSEUM_MAX_OUTPUT` | teto em bytes do JSON de cada resposta MCP (padrão 48000) |
+| `FIXTURE_DIR` | pasta de saída dos mapas sintéticos dos testes `gerar_dados_*` |
+| `PLAYWRIGHT_MODULE` | caminho alternativo do módulo `playwright` em `scripts/screenshots.mjs` |
+
+Nenhuma variável guarda segredo. `.env*` está no `.gitignore`.
+
+## Terminal (servidor MCP)
+
+`--help`, `--version` e um `export-context` real (pasta sem mapas, sem credencial) estão em
+[`docs/terminal.txt`](docs/terminal.txt).
+
 ## Novidades da v0.7
 
 > Tudo abaixo foi escrito a partir do SDK/Xash3D e testado com arquivos **sintéticos**; nenhum arquivo da
@@ -376,6 +408,17 @@ Half-Life, não uma regra do CS (os jogadores do CS trocam de modelo por time em
 textura escolhida com a malha UV por cima (zoom na roda, pan arrastando, xadrez, canal alpha, exportar PNG), lista com
 tamanho e flags de cada textura; passar o mouse num triângulo o realça no mapa e no modelo, e clicar no modelo seleciona
 a textura dele. Partes puras (tabela de skin, projeção UV, acerto de triângulo) em `src/lib/skins.ts`, com testes.
+
+## Gates de CI
+
+| workflow | quando | o que checa |
+|---|---|---|
+| `ci.yml` (CI) | pull requests | `web`: `bun install --frozen-lockfile`, `bun run typecheck`, `bun test`, `bun run build`. `rust`: `cargo clippy --all-targets -- -D warnings` e `cargo test` em `src-tauri` (com GTK/WebKit). `core`: o mesmo com `--no-default-features` (núcleo + MCP). |
+| `validate.yml` (Validate) | pull requests e push em `master` | validação padrão do `juninmd/base-actions` (`reusable-validate.yml`): instalação, lint, testes e auditoria de dependências. |
+| `security.yml` (Security Scan) | push em `master`, semanal (domingo) e manual | varredura de segurança do `juninmd/base-actions` (`reusable-security-scan.yml`). |
+| `release.yml` (Release) | tag `v*` e manual | instaladores Tauri (Windows, Linux, macOS arm64/Intel) como release em rascunho e binário `bsp-museum-mcp` por plataforma. |
+
+O gatilho de push do `ci.yml` aponta para `main`, mas a branch padrão é `master`: hoje o CI roda só em pull request.
 
 ## Testes
 

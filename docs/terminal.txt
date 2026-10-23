@@ -1,0 +1,33 @@
+$ bsp-museum-mcp --version
+bsp-museum-mcp 0.7.0
+
+$ bsp-museum-mcp --help
+bsp-museum-mcp — servidor MCP (somente leitura) e exportação de contexto do acervo de mapas GoldSrc
+
+USO
+  bsp-museum-mcp [serve] [--root <pasta>]... [--allow-write] [--max-output <bytes>]
+  bsp-museum-mcp export-context <pasta-de-mapas> --out <pasta> [--format json|md|jsonl] [--slots <n>]
+  bsp-museum-mcp --version | --help
+
+SERVE (padrão)
+  Fala MCP (JSON-RPC 2.0, uma mensagem por linha) em stdin/stdout; logs vão para stderr.
+  --root <pasta>        raiz permitida (repetível). Também lê BSP_MUSEUM_ROOTS (separado por ':' ou ';').
+                        Sem nenhuma raiz, só o diretório de trabalho atual.
+  --allow-write         deixa map_radar gravar overviews/ dentro de uma raiz (env BSP_MUSEUM_ALLOW_WRITE=1)
+  --max-output <bytes>  teto do JSON de cada resposta (padrão 48000; env BSP_MUSEUM_MAX_OUTPUT)
+
+EXPORT-CONTEXT
+  Gera index.json, maps/<nome>.json, REPORT.md, fastdl.txt e AGENTS.md em --out.
+  --format json|md|jsonl   formato por mapa (padrão json)
+  --slots <n>              slots do servidor para o diagnóstico (padrão 32)
+
+EXEMPLO
+  claude mcp add bsp-museum -- /caminho/bsp-museum-mcp serve --root /caminho/cstrike
+
+$ bsp-museum-mcp export-context <pasta-vazia> --out <saida>
+0 mapa(s) em <saida>: 0 crítico(s), 0 aviso(s), 0 info; FastDL 0 B em 0 arquivo(s); 0 recurso(s) ausente(s)
+  index.json
+  REPORT.md
+  fastdl.txt
+  AGENTS.md
+exit=0
