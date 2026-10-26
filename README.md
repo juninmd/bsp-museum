@@ -459,9 +459,10 @@ JSON gerados pelo backend em Rust (WebGL via SwiftShader).
   `StudioCalcRotations` do SDK, mas nenhum `.mdl` real passou pelo parser (só modelos sintéticos); `STUDIO_LX/LY/LZ`
   não fazem nada porque o próprio SDK multiplica o deslocamento por 0. Blends além de 2 e 4 (os 9 do jogador),
   o remap de cor (regra do Xash3D, não do `hw.dll`) e o nome de eventos fora do SDK não foram conferidos contra
-  o jogo. Pivôs, `automove` e grafo de transição de sequências não são lidos. O frontend ainda não usa os
-  controladores, bodygroups, remap e hitboxes (só o backend e o contrato de tipos estão prontos). Sprites
-  (`.spr`) só entram na lista de recursos, não são desenhados.
+  o jogo. Pivôs, `automove` e grafo de transição de sequências não são lidos. Controladores, bodygroups,
+  remap e hitboxes já aparecem na vista do modelo (`src/lib/mdl-controls.ts`, `src/model-viewer.ts`), mas
+  só foram conferidos com modelos sintéticos. Sprites (`.spr`) têm player 2D/3D próprio (ver
+  `src/ui/explorer/sprite-player.ts`).
 - Props `.mdl` dentro do mapa continuam em pose de repouso.
 - Só entram na vista 3D do mapa entidades com `model` **explícito** no BSP — armas/itens que o
   jogo injeta por conta própria (sem essa chave) não têm como ser resolvidos só com o que está no
