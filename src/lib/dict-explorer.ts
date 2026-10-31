@@ -6,6 +6,34 @@ export const DICT_EXPLORER: Record<string, [string, string]> = {
   "nav.explorer": ["Explorador", "Explorer"],
   "exp.aria": ["Explorador de arquivos do mod", "Mod file explorer"],
 
+  // seção Skins: abas de modelos (prefixo/time), recursos, texturas, sprites, áudio e arquivos
+  "nav.skins": ["Skins", "Skins"],
+  "skins.aria": ["Skins e recursos do mod", "Skins and mod resources"],
+  "skins.tabsAria": ["subseções de skins", "skins subsections"],
+  "skins.needFolder": [
+    "Escolha a pasta do mod acima para listar os modelos.",
+    "Choose the mod folder above to list models.",
+  ],
+  "skins.tab.p": ["Jogadores (p_)", "Players (p_)"],
+  "skins.tab.v": ["1ª pessoa (v_)", "First person (v_)"],
+  "skins.tab.w": ["No mundo (w_)", "World (w_)"],
+  "skins.tab.tr": ["TRs", "TRs"],
+  "skins.tab.ct": ["CTs", "CTs"],
+  "skins.tab.zombie": ["Zumbis", "Zombies"],
+  "skins.tab.models": ["Recursos (todos os .mdl)", "Resources (all .mdl)"],
+  "skins.none.p": ["Nenhum modelo de jogador (p_ ou models/player) neste mod.", "No player model (p_ or models/player) in this mod."],
+  "skins.none.v": ["Nenhum modelo em primeira pessoa (v_) neste mod.", "No first-person model (v_) in this mod."],
+  "skins.none.w": ["Nenhum modelo de mundo (w_) neste mod.", "No world model (w_) in this mod."],
+  "skins.none.tr": ["Nenhum modelo de terrorista reconhecido pelo nome.", "No terrorist model recognized by name."],
+  "skins.none.ct": ["Nenhum modelo de contra-terrorista reconhecido pelo nome.", "No counter-terrorist model recognized by name."],
+  "skins.none.zombie": ["Nenhum modelo de zumbi reconhecido pelo nome.", "No zombie model recognized by name."],
+  "skins.search": ["buscar modelo…", "search model…"],
+  "skins.dirsAria": ["pastas com modelos", "model folders"],
+  "skins.listAria": ["arquivos .mdl", ".mdl files"],
+  "skins.rootDir": ["(raiz)", "(root)"],
+  "skins.count": ["{0} de {1} modelos", "{0} of {1} models"],
+  "skins.noMatch": ["Nenhum modelo com esse filtro.", "No models match this filter."],
+
   // barra superior e abas
   "exp.pick": ["escolher pasta do mod…", "choose mod folder…"],
   "exp.pickTitle": ["Pasta do mod (a que contém maps/, sound/, sprites/…)", "Mod folder (the one with maps/, sound/, sprites/…)"],
@@ -86,14 +114,14 @@ export const DICT_EXPLORER: Record<string, [string, string]> = {
     "BSP map: open the folder in the gallery (Maps tab) to see the floor plan, diagnostics and 3D view.",
   ],
   "exp.view.model.hint": [
-    "Modelo .mdl: o visualizador 3D fica na seção Recursos. Escolha a pasta do mod lá e selecione este arquivo.",
-    "MDL model: the 3D viewer lives in the Resources section. Pick the mod folder there and select this file.",
+    "Modelo .mdl: abra a subaba Recursos (seção Skins) e escolha este arquivo.",
+    "MDL model: open the Resources sub-tab (Skins section) and pick this file.",
   ],
   "exp.view.model.inPak": [
     "Modelo dentro de um .pak: o visualizador de modelos só abre arquivos soltos no disco.",
     "Model inside a .pak: the model viewer only opens loose files on disk.",
   ],
-  "exp.view.model.open": ["abrir seção Recursos", "open the Resources section"],
+  "exp.view.model.open": ["abrir a subaba Recursos", "open the Resources sub-tab"],
   "exp.view.wad": [
     "WAD de texturas: a aba Texturas mostra a grade de miniaturas e quais mapas usam cada uma.",
     "Texture WAD: the Textures tab shows the thumbnail grid and which maps use each texture.",

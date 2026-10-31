@@ -14,8 +14,7 @@
       </div>
       <nav class="seg nav-view" role="tablist" aria-label="seção" data-i18n-aria="nav.aria">
         <button id="nav-maps" class="active" aria-pressed="true" data-i18n="nav.maps">Mapas</button>
-        <button id="nav-resources" aria-pressed="false" data-i18n="nav.resources">Recursos</button>
-        <button id="nav-explorer" aria-pressed="false" data-i18n="nav.explorer">Explorador</button>
+        <button id="nav-skins" aria-pressed="false" data-i18n="nav.skins">Skins</button>
       </nav>
       <div class="tools">
         <button id="lang-toggle" class="ghost2" data-i18n-title="tools.lang" title="idioma">PT</button>
@@ -74,50 +73,7 @@
 
     <main id="gallery" class="gallery" aria-live="polite"></main>
 
-    <section id="resources" class="resources" hidden aria-live="polite">
-      <div class="res-toolbar">
-        <button id="res-pick" data-i18n="mdl.pick">escolher pasta do mod…</button>
-        <span id="res-root" class="dim"></span>
-      </div>
-      <div class="res-layout">
-        <div class="res-col" id="res-dirs" aria-label="pastas com modelos" data-i18n-aria="mdl.dirsAria"></div>
-        <div class="res-col" id="res-files" aria-label="arquivos .mdl" data-i18n-aria="mdl.filesAria"></div>
-        <div class="res-viewer-wrap">
-          <div class="res-viewer-toolbar" id="res-viewer-toolbar" hidden>
-            <label class="chk-seq">
-              <span data-i18n="mdl.sequence">sequência</span>
-              <select id="res-sequence"></select>
-            </label>
-            <button id="res-play" type="button" data-i18n="mdl.play">tocar</button>
-            <span class="frame-track">
-              <input id="res-frame" type="range" min="0" max="0" step="1" value="0" aria-label="quadro" data-i18n-aria="mdl.frame" />
-              <span id="res-frame-ticks" class="frame-ticks" aria-hidden="true"></span>
-            </span>
-            <span id="res-frame-label" class="hintc">–</span>
-            <label class="chk-seq">
-              <span data-i18n="mdl.speed">velocidade</span>
-              <select id="res-speed">
-                <option value="0.25">0,25×</option>
-                <option value="0.5">0,5×</option>
-                <option value="1" selected>1×</option>
-                <option value="2">2×</option>
-              </select>
-            </label>
-            <label class="chk-seq" id="res-skin-wrap" hidden>
-              <span data-i18n="mdl.skin">skin</span>
-              <select id="res-skin"></select>
-            </label>
-            <span id="res-anim-note" class="hintc"></span>
-          </div>
-          <div class="res-viewer-body">
-            <div class="res-viewer3d" id="res-viewer3d"></div>
-            <aside class="res-panel" id="res-panel" hidden aria-label="controles do modelo" data-i18n-aria="mdl.panelAria"></aside>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="explorer" class="explorer" hidden aria-label="Explorador" data-i18n-aria="exp.aria"></section>
+    <section id="skins" class="explorer" hidden aria-label="Skins" data-i18n-aria="skins.aria"></section>
 
     <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-label="detalhes do mapa" data-i18n-aria="detail.aria" hidden>
       <button id="close-drawer" class="close" aria-label="fechar" data-i18n-aria="common.close">×</button>

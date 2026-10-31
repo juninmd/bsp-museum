@@ -80,7 +80,11 @@ Nenhuma variável guarda segredo. `.env*` está no `.gitignore`.
   lightstyles animados, hulls de colisão, volumes/zonas (triggers, buyzone, bomb target…), luzes, sprites
   (`env_sprite`), sons ambientes, decals, névoa, sol, portas/plataformas/trens animados — ver o painel
   [Camadas](#vista-3d-painel-camadas-v07).
-- **Explorador** (nova seção): arquivos do mod (mod/valve/`.pak`) com visualizador por tipo; navegador de
+- **Skins** (nova seção): o app agora tem duas features — **Mapas** e **Skins**. A seção Skins tem subabas
+  por tipo de modelo (`p_` jogadores, `v_` 1ª pessoa, `w_` no mundo), por time (**TRs**, **CTs**, **Zumbis**,
+  reconhecidos pelo nome/pasta: `terror`, `leet`, `arctic`, `guerilla` / `urban`, `gign`, `gsg9`, `sas`, `vip` /
+  `zombie*`, `zumbi`, `zp_`), **Recursos** (todos os `.mdl`), **Texturas (WAD)**, **Sprites**, **Áudio** e
+  **Arquivos** do mod (mod/valve/`.pak`) com visualizador por tipo; navegador de
   **WAD** (grade de texturas, mips, PNG, quais mapas usam); player de **sprites** `.spr` (2D | 3D: billboard por tipo, blend, `renderamt`/`rendercolor`, esfera do raio e câmera do mundo girando sozinha; ver `prints/v8-sprite-3d.png`); **áudio** com
   forma de onda e loop; `.nav`, `.dem`, `liblist.gam`, `hud.txt`, `_detail.txt`, `mapcycle.txt`.
 - **`.mdl` completo**: bodygroups, bone controllers, blends, cores de time, chrome/aditivo/masked,
@@ -102,10 +106,10 @@ claude mcp add bsp-museum -- ./target/release/bsp-museum-mcp serve --root /camin
 |---|---|---|
 | ![skins em 3D](prints/v8-skins-3d.png) | ![sprite em 3D](prints/v8-sprite-3d-aditivo.png) | ![sons 3D](prints/v8-sons-3d.png) |
 
-- **Skins** (aba Recursos): uma miniatura 3D girando por família de skin (um só contexto WebGL compartilhado),
+- **Skins** (seção **Skins** → subaba do modelo ou **Recursos**): uma miniatura 3D girando por família de skin (um só contexto WebGL compartilhado),
   comparação lado a lado ou com divisor arrastável, prévia das equipes (top/bottom) e **mapa UV** com a malha
   sobre a textura, destaque do triângulo no modelo (e o caminho inverso) e exportação PNG.
-- **Sprites** (Explorador → Sprites, alternador 2D | 3D): os cinco tipos de `.spr` (`parallel`, `parallel_upright`,
+- **Sprites** (Skins → Sprites, alternador 2D | 3D): os cinco tipos de `.spr` (`parallel`, `parallel_upright`,
   `facing_upright`, `oriented`, `parallel_oriented`) comportam-se como billboards de verdade numa cena orbitável, com
   blend por `tex_format`, origem do frame, esfera do raio, `renderamt`/`rendercolor` e câmera do jogo girando sozinha.
 - **Sons 3D** (camada **Sons 3D** na vista do mapa): cada `ambient_generic` vira uma fonte Web Audio com panner HRTF e
@@ -175,7 +179,7 @@ marca o que já vem no jogo base, soma o que o jogador baixa e exporta a lista (
 
 ![radar](prints/v6-radar.png)
 
-**Também**: animação de `.mdl` e troca de skin na aba Recursos (ver [Modelos](#modelos-mdl-props-e-o-visualizador-avulso)),
+**Também**: animação de `.mdl` e troca de skin na seção Skins (ver [Modelos](#modelos-mdl-props-e-o-visualizador-avulso)),
 BSP do **Quake (v29)** abre (texturas em tons de cinza, lightmap monocromático), índice persistente
 da varredura (reabrir uma pasta só relê o que mudou), varredura/auditoria/malha fora da thread da UI,
 CI no GitHub Actions e instaladores para Windows, Linux e macOS.
@@ -286,7 +290,7 @@ src-tauri/src/
   main.rs           comandos Tauri, cache e settings (só com a feature `app`)
   lib.rs            núcleo sem interface (usado pelo app e pelo servidor MCP)
   mcp/, bin/mcp.rs  servidor MCP stdio; agentctx.rs exporta o contexto para agentes
-  spr.rs wadlist.rs image.rs audio.rs pak.rs modfiles.rs nav.rs demo.rs textfiles.rs  formatos do Explorador
+  spr.rs wadlist.rs image.rs audio.rs pak.rs modfiles.rs nav.rs demo.rs textfiles.rs  formatos de Skins (modelos, WAD, sprites, áudio, arquivos)
   hulls.rs volumes.rs scene.rs bsp/lightstyle.rs bsp/texanim.rs  recursos extras do mapa
 src/                frontend (Vite + TS puro)
   viewer3d.ts       cena Three.js: chunks, lightmap, PVS, frustum, foco em entidade
@@ -299,8 +303,10 @@ src/                frontend (Vite + TS puro)
   lib/mdl-controls.ts  slider -> byte, cache de quadros, plano de material, caixas por quadro do .mdl (puro)
   lib/dict-model.ts    textos do painel do .mdl (entra em `DICT`)
   lib/skins.ts      família de skin -> textura, projeção UV <-> pixel, hit-test de triângulo UV (puro)
+  lib/skins-catalog.ts  subabas de modelo: prefixo v_/w_/p_, pasta models/player e time TR/CT/zumbi (puro)
   lib/dict-skins.ts textos da visualização de skins (entra em `DICT`)
-  resources.ts      aba Recursos: barra de animação e painel de controles do .mdl
+  resources.ts      seção Skins: barra de animação e painel de controles do .mdl
+  ui/skins/         seção Skins: shell das subabas + catálogo de modelos (pastas, busca, visualizador)
   model-viewer.ts   cena própria do .mdl (materiais, overlays, comparação de skins, seleção por clique)
   mdl-rig.ts        geometria do .mdl montada uma vez e reaproveitada por todas as skins (um "look" = jogo de materiais)
   skin-studio.ts    um único WebGLRenderer compartilhado que desenha as miniaturas 3D das skins
@@ -343,19 +349,20 @@ posicionados à mão) entra na vista 3D do mapa junto com o brush — sem contro
 "texturizado" já existente liga tudo junto. Modelo referenciado que não existe no disco é ignorado
 em silêncio; o mapa continua abrindo normalmente.
 
-A aba **Recursos** (ao lado da galeria de mapas) navega as pastas do mod (`models/player`,
-`models/weapons`, `models/`) e abre qualquer `.mdl` isolado — jogador, arma, prop — fora do
-contexto de um mapa específico.
+A seção **Skins** (ao lado da galeria de mapas) navega o mod inteiro: as subabas `p_`, `v_`, `w_` filtram os
+modelos pelo prefixo, **TRs**/**CTs**/**Zumbis** filtram pelo time reconhecido no nome ou na pasta
+(`models/player/urban`), e **Recursos** mostra todos os `.mdl` agrupados por pasta. Cada subaba abre qualquer
+`.mdl` isolado — jogador, arma, prop — fora do contexto de um mapa específico.
 
 **Animação.** O backend decodifica `mstudioseqdesc`/`mstudioanim_t` (RLE por canal, como no SDK) e entrega
 a pose de mundo de cada bone por quadro (`load_sequence`, sob demanda e com cache); o frontend interpola
-entre quadros e faz o skinning na CPU. A aba Recursos tem seletor de sequência, tocar/pausar, quadro e
+entre quadros e faz o skinning na CPU. A subaba de modelo (ou **Recursos**) tem seletor de sequência, tocar/pausar, quadro e
 velocidade; sequências em `nome01.mdl` (grupo externo) são lidas da mesma pasta. **Skins**: as famílias
 (`skinref`) aparecem num seletor quando há mais de uma. A composição de rotação segue `AngleQuaternion`
 do SDK e é coberta por teste contra uma matriz de Euler independente; o `.mdl` de teste é sintético.
 
 **Extras (contrato em `src/types/mdl-extra.ts`).** Tudo entra como campo novo e opcional no `MdlSummary`/`SeqFrames`;
-as chamadas antigas continuam iguais. O painel ao lado da cena (Recursos) usa todos eles — ver *Painel de controles* abaixo.
+as chamadas antigas continuam iguais. O painel ao lado da cena (subaba Recursos) usa todos eles — ver *Painel de controles* abaixo.
 
 - *Bone controllers* (`controllers`): olhar/mira (slots 0..3) e boca (slot 4), com tipo, faixa e byte de
   repouso para montar sliders; `load_sequence(.., controllers)` aplica `StudioCalcBoneAdj` do SDK.
@@ -372,7 +379,7 @@ as chamadas antigas continuam iguais. O painel ao lado da cena (Recursos) usa to
 - *Texturas externas* (`nomeT.mdl`) e grupos de sequência (`nome01.mdl`) são achados na pasta do modelo, sem
   diferenciar maiúsculas; o mesmo vale para props do mapa.
 
-**Painel de controles (aba Recursos).** Só aparecem as seções que o modelo tem:
+**Painel de controles (seção Skins).** Só aparecem as seções que o modelo tem:
 
 - *Bodygroups*: um seletor por bodypart (`bodyValue`); trocar recarrega o modelo (`load_model(path, body, top, bottom)`) sem mexer na câmera.
 - *Cores de time*: matiz 0..255 de cima e de baixo (amostra do matiz; clicar nela volta à cor do modelo), só em modelo com

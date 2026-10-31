@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./style-explorer.css";
-import { mountModelViewer } from "./resources.ts";
 import { applyStatic, detectLang, getLang, modeLabel, ruleLabel, setLang, t } from "./i18n.ts";
 import {
   allRules,
@@ -15,13 +14,13 @@ import {
 } from "./lib/filters.ts";
 import { fmtSize } from "./lib/report.ts";
 import { annotationOf, applySettings, maps, saveSettings, setMaps, settings, updateAnnotation } from "./store.ts";
-import type { Lang, MapDetail, MapSummary, MdlSummary, ModelDir, Settings, Theme } from "./types.ts";
+import type { Lang, MapDetail, MapSummary, Settings, Theme } from "./types.ts";
 import { openAudit } from "./ui/audit.ts";
 import { openCompare } from "./ui/compare.ts";
 import { detailHtml, disposeDetail, wireDetail } from "./ui/detail.ts";
 import { escapeHtml, trapTab } from "./ui/dom.ts";
-import { initExplorer } from "./ui/explorer/index.ts";
 import { initModal, isModalOpen } from "./ui/modal.ts";
+import { initSkins } from "./ui/skins/index.ts";
 
 const gallery = document.querySelector<HTMLElement>("#gallery")!;
 const statusBar = document.querySelector<HTMLElement>("#status")!;
@@ -44,17 +43,9 @@ const scrim = document.querySelector<HTMLElement>("#scrim")!;
 const closeDrawerBtn = document.querySelector<HTMLButtonElement>("#close-drawer")!;
 
 const navMaps = document.querySelector<HTMLButtonElement>("#nav-maps")!;
-const navResources = document.querySelector<HTMLButtonElement>("#nav-resources")!;
+const navSkins = document.querySelector<HTMLButtonElement>("#nav-skins")!;
 const mapControls = document.querySelector<HTMLElement>("#map-controls")!;
-const navExplorer = document.querySelector<HTMLButtonElement>("#nav-explorer")!;
-const explorerSection = document.querySelector<HTMLElement>("#explorer")!;
-const resourcesSection = document.querySelector<HTMLElement>("#resources")!;
-const resPickBtn = document.querySelector<HTMLButtonElement>("#res-pick")!;
-const resRootLabel = document.querySelector<HTMLElement>("#res-root")!;
-const resDirs = document.querySelector<HTMLElement>("#res-dirs")!;
-const resFiles = document.querySelector<HTMLElement>("#res-files")!;
-const resViewer3d = document.querySelector<HTMLElement>("#res-viewer3d")!;
-const resViewerToolbar = document.querySelector<HTMLElement>("#res-viewer-toolbar")!;
+const skinsSection = document.querySelector<HTMLElement>("#skins")!;
 
 /** elemento a devolver o foco quando o drawer fechar (o card que foi clicado/ativado) */
 let lastFocused: HTMLElement | null = null;
@@ -94,7 +85,7 @@ function refreshLanguage() {
   render();
   updateCompareButton();
   if (current && !drawer.hidden) renderCurrentDetail();
-  explorer.refreshLanguage();
+  skins.refreshLanguage();
 }
 
 // ------------------------------------------------------------------ galeria
@@ -324,19 +315,14 @@ function fillTagFilter() {
   filters.tag = tagFilter.value;
 }
 
-// -------------------------------------------------------------- Recursos (aba avulsa)
+// -------------------------------------------------------------- seções (features)
 
-let resViewer: { dispose(): void } | null = null;
-let resRoot = "";
-
-function switchView(view: "maps" | "resources" | "explorer") {
+function switchView(view: "maps" | "skins") {
   const showMaps = view === "maps";
-  const showRes = view === "resources";
-  const showExplorer = view === "explorer";
+  const showSkins = view === "skins";
   for (const [btn, on] of [
     [navMaps, showMaps],
-    [navResources, showRes],
-    [navExplorer, showExplorer],
+    [navSkins, showSkins],
   ] as const) {
     btn.classList.toggle("active", on);
     btn.setAttribute("aria-pressed", String(on));
@@ -344,102 +330,17 @@ function switchView(view: "maps" | "resources" | "explorer") {
   mapControls.hidden = !showMaps;
   gallery.hidden = !showMaps;
   statusBar.hidden = !showMaps;
-  resourcesSection.hidden = !showRes;
-  explorerSection.hidden = !showExplorer;
-  if (showExplorer) explorer.show();
-  else explorer.hide();
-  if (!showRes) {
-    resViewer?.dispose();
-    resViewer = null;
-  }
+  skinsSection.hidden = !showSkins;
+  if (showSkins) skins.show();
+  else skins.hide();
 }
 
-function renderResDirs(dirs: ModelDir[]) {
-  resDirs.replaceChildren();
-  if (!dirs.length) {
-    resDirs.innerHTML = `<p class="empty">${escapeHtml(t("mdl.noneFound"))}</p>`;
-    return;
-  }
-  for (const dir of dirs) {
-    const item = document.createElement("button");
-    item.className = "res-item";
-    item.textContent = `${dir.name} (${dir.count})`;
-    item.addEventListener("click", async () => {
-      resDirs.querySelectorAll(".res-item").forEach((el) => el.classList.remove("active"));
-      item.classList.add("active");
-      const files = await invoke<string[]>("list_models", { dir: dir.path });
-      renderResFiles(files);
-    });
-    resDirs.append(item);
-  }
-}
-
-function renderResFiles(files: string[]) {
-  resFiles.replaceChildren();
-  if (!files.length) {
-    resFiles.innerHTML = `<p class="empty">${escapeHtml(t("mdl.emptyDir"))}</p>`;
-    return;
-  }
-  for (const path of files) {
-    const name = path.split(/[\\/]/).pop() ?? path;
-    const item = document.createElement("button");
-    item.className = "res-item";
-    item.textContent = name;
-    item.addEventListener("click", async () => {
-      resFiles.querySelectorAll(".res-item").forEach((el) => el.classList.remove("active"));
-      item.classList.add("active");
-      await openModel(path);
-    });
-    resFiles.append(item);
-  }
-}
-
-let modelRequest = 0;
-
-async function openModel(path: string) {
-  const mine = ++modelRequest;
-  resViewer?.dispose();
-  resViewer = null;
-  resViewerToolbar.hidden = true;
-  resViewer3d.innerHTML = `<div class="loading">${escapeHtml(t("mdl.decoding"))}</div>`;
-  try {
-    const model = await invoke<MdlSummary>("load_model", { path });
-    if (mine !== modelRequest) return; // outro modelo foi escolhido enquanto este carregava
-    resViewer3d.replaceChildren();
-    resViewer = mountModelViewer(resViewer3d, model, path);
-    resViewerToolbar.hidden = model.sequences.length === 0;
-  } catch (err) {
-    if (mine !== modelRequest) return;
-    resViewer3d.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
-  }
-}
-
-const explorer = initExplorer(explorerSection, {
+const skins = initSkins(skinsSection, {
   getLastDir: () => settings.last_dir,
-  gotoResources: () => switchView("resources"),
 });
 
 navMaps.addEventListener("click", () => switchView("maps"));
-navResources.addEventListener("click", () => switchView("resources"));
-navExplorer.addEventListener("click", () => switchView("explorer"));
-
-resPickBtn.addEventListener("click", async () => {
-  const dir = await open({ directory: true, multiple: false, title: t("mdl.pickTitle") });
-  if (typeof dir !== "string") return;
-  resRoot = dir;
-  resRootLabel.textContent = dir;
-  resFiles.replaceChildren();
-  resViewer?.dispose();
-  resViewer = null;
-  resViewer3d.replaceChildren();
-  resViewerToolbar.hidden = true;
-  try {
-    const dirs = await invoke<ModelDir[]>("list_model_dirs", { root: resRoot });
-    renderResDirs(dirs);
-  } catch (err) {
-    resDirs.innerHTML = `<div class="loading error">${escapeHtml(String(err))}</div>`;
-  }
-});
+navSkins.addEventListener("click", () => switchView("skins"));
 
 // ------------------------------------------------------------------------------------
 

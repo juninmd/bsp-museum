@@ -38,6 +38,29 @@
   min-width: 0;
 }
 
+/* seção Skins: subabas com contador e a lista de modelos do mod */
+.skins-tabs {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.skins-tabs .tab-count {
+  margin-left: 0.3rem;
+  font-size: 0.72em;
+  opacity: 0.75;
+}
+
+.skins-models {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.skins-models .m-count {
+  align-self: center;
+  font-size: 0.78rem;
+}
+
 /* estados */
 .exp-state {
   display: flex;
