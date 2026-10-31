@@ -770,6 +770,42 @@ h3 {
   height: 100%;
 }
 
+/* atalhos de vista da câmera (frente, lado, costas, topo, enquadrar) */
+.mdl-views {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 2;
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.2rem;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bar) 82%, transparent);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+
+.mdl-view-btn {
+  padding: 0.1rem 0.4rem;
+  font-size: 0.7rem;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.mdl-view-btn:hover,
+.mdl-view-btn:focus-visible {
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.mdl-view-btn[data-view="hero"],
+.mdl-view-btn[data-view="fit"] {
+  color: var(--text);
+}
+
 
 /* controles do .mdl: painel ao lado da cena, marcadores de evento na barra do tempo */
 .res-viewer-body {
