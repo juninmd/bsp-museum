@@ -112,7 +112,6 @@ export function restBounds(model: Model): THREE.Box3 {
   if (box.isEmpty()) box.set(new THREE.Vector3(-50, -50, -50), new THREE.Vector3(50, 50, 50));
   return box;
 }
-
 interface Bucket {
   textureIndex: number;
   /** triângulo de origem de cada triângulo do bucket */
@@ -284,6 +283,16 @@ export class MdlRig {
       b.geometry.boundingBox = null;
     }
     if (this.highlighted.length > 0) this.refreshHighlight();
+  }
+
+  /** Caixa do modelo na pose atual (deformada pela animação), em espaço Y-up da cena. */
+  bounds(): THREE.Box3 {
+    const box = new THREE.Box3();
+    const p = this.flat;
+    const v = new THREE.Vector3();
+    for (let i = 0; i + 2 < p.length; i += 3) box.expandByPoint(v.set(...toWorld(p[i]!, p[i + 1]!, p[i + 2]!)));
+    if (box.isEmpty()) box.set(new THREE.Vector3(-50, -50, -50), new THREE.Vector3(50, 50, 50));
+    return box;
   }
 
   /** Triângulo de origem (índice em `MdlSummary.texindex`) sob o raio, ou -1. `layer` = a camada do look visível. */

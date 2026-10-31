@@ -105,6 +105,7 @@ function bindAnimation(viewer: ModelViewer, initial: MdlSummaryEx, path: string)
   let speed = 1;
   let seq = 0;
   let needReset = false; // troca de sequência ainda não aplicada (um slider mexido no meio não a cancela)
+  let framed = false; // o enquadramento da câmera ainda não usou a pose de verdade
   let token = 0; // descarta resposta de uma sequência que já não é a escolhida
   let reloadToken = 0; // idem para o recarregamento do modelo (bodygroup, cor de time)
   let raf = 0;
@@ -192,6 +193,11 @@ function bindAnimation(viewer: ModelViewer, initial: MdlSummaryEx, path: string)
       out[i * 3 + 2] = mats[m + 6]! * x + mats[m + 7]! * y + mats[m + 8]! * z + mats[m + 11]!;
     }
     viewer.setVertexPositions(out);
+    // o primeiro quadro (ou a pose de repouso, sem animação) define o enquadramento
+    if (!framed) {
+      framed = true;
+      viewer.frame();
+    }
   }
 
   /** hitboxes e attachments do quadro `f` (ou do repouso, quando não há pose) */
@@ -287,6 +293,10 @@ function bindAnimation(viewer: ModelViewer, initial: MdlSummaryEx, path: string)
       frameLabel.textContent = "–";
       note.textContent = t("mdl.unavailable");
       viewer.setVertexPositions(model.positions);
+      if (!framed) {
+        framed = true;
+        viewer.frame();
+      }
       applyOverlays(0);
       return;
     }

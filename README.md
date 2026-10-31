@@ -354,6 +354,16 @@ modelos pelo prefixo, **TRs**/**CTs**/**Zumbis** filtram pelo time reconhecido n
 (`models/player/urban`), e **Recursos** mostra todos os `.mdl` agrupados por pasta. Cada subaba abre qualquer
 `.mdl` isolado — jogador, arma, prop — fora do contexto de um mapa específico.
 
+**Malha.** Cada `mesh` traz um stream de comandos de triângulo: `count > 0` é uma **tira**
+(triângulos consecutivos `(i-1, i, i+1)`) e `count < 0` é um **leque** (pivô no primeiro vértice) —
+o inverso do que o nome sugere. Ler o sinal trocado mantém a contagem de triângulos (`n-2` nos dois
+casos) mas rasga a superfície: nos `.mdl` da Valve isso deixava 3 a 5 vezes mais arestas de fronteira
+e buracos visíveis no modelo. Há teste com tira e leque de 4 vértices fixando a convenção.
+
+**Câmera.** O visualizador enquadra a **pose animada** (no bind pose a origem fica nos pés, na
+animação no quadril — enquadrar o bind deixava o modelo baixo e pequeno na tela) e tem atalhos de
+vista: `3/4` (padrão), frente, lado, costas, topo e *enquadrar*.
+
 **Animação.** O backend decodifica `mstudioseqdesc`/`mstudioanim_t` (RLE por canal, como no SDK) e entrega
 a pose de mundo de cada bone por quadro (`load_sequence`, sob demanda e com cache); o frontend interpola
 entre quadros e faz o skinning na CPU. A subaba de modelo (ou **Recursos**) tem seletor de sequência, tocar/pausar, quadro e

@@ -1224,10 +1224,16 @@ struct Vert {
     bone: u8,
 }
 
-/// Comandos de triângulo do GoldSrc: `i16 count` (positivo = fan, negativo =
-/// strip, `0` termina o stream), seguido de `|count|` vértices, cada um com
-/// `vertindex, normindex, s, t` (4 x i16). `s`/`t` estão em espaço de pixel da
-/// textura — normalizados aqui por `tex_w`/`tex_h`.
+/// Comandos de triângulo do GoldSrc (`studiomdl`): `i16 count` (`0` termina o stream),
+/// seguido de `|count|` vértices, cada um com `vertindex, normindex, s, t` (4 x i16).
+///
+/// A convenção de sinal é a **inversa** da que o nome "fan/strip" sugere à primeira vista:
+/// `count > 0` é uma **tira** (triângulos consecutivos `(i-1, i, i+1)`, com o winding
+/// alternado) e `count < 0` é um **leque** (pivô no primeiro vértice). Conferido em 226
+/// `.mdl` reais: ler o sinal ao contrário mantém a contagem de triângulos (n-2 nos dois
+/// casos) mas deixa 3 a 5 vezes mais arestas de fronteira — ou seja, buracos na malha.
+///
+/// `s`/`t` estão em espaço de pixel da textura - normalizados aqui por `tex_w`/`tex_h`.
 fn read_triangle_stream(
     data: &[u8],
     offset: usize,
@@ -1261,18 +1267,19 @@ fn read_triangle_stream(
         }
 
         if cmd > 0 {
-            // Fan: v0 fixo, (v0,vi,vi+1) pra cada i.
+            // Tira: triângulos consecutivos; o winding alterna pra manter a face pra fora
+            // ((0,1,2), (2,1,3), (2,3,4), (4,3,5)…).
             for i in 1..n.saturating_sub(1) {
-                push_triangle(model, verts[0], verts[i], verts[i + 1], texindex);
+                if i % 2 == 1 {
+                    push_triangle(model, verts[i - 1], verts[i], verts[i + 1], texindex);
+                } else {
+                    push_triangle(model, verts[i], verts[i - 1], verts[i + 1], texindex);
+                }
             }
         } else {
-            // Strip: alterna o sentido pra manter o winding.
-            for i in 0..n.saturating_sub(2) {
-                if i % 2 == 0 {
-                    push_triangle(model, verts[i], verts[i + 1], verts[i + 2], texindex);
-                } else {
-                    push_triangle(model, verts[i + 1], verts[i], verts[i + 2], texindex);
-                }
+            // Leque: v0 fixo, (v0, vi, vi+1) pra cada i.
+            for i in 1..n.saturating_sub(1) {
+                push_triangle(model, verts[0], verts[i], verts[i + 1], texindex);
             }
         }
         if model.texindex.len() > MAX_TRIS {

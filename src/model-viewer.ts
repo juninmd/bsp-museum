@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { t } from "./i18n.ts";
 import { BOX_STRIDE, hitGroupColor } from "./lib/mdl-controls.ts";
-import { MdlRig, addModelLights, decodeTextures, emptyTextures, restBounds, toWorld, type Look, type Model, type TextureSet } from "./mdl-rig.ts";
+import { MdlRig, addModelLights, decodeTextures, emptyTextures, toWorld, type Look, type Model, type TextureSet } from "./mdl-rig.ts";
 
 export type { Model } from "./mdl-rig.ts";
 
@@ -37,6 +38,8 @@ export interface CompareSpec {
 export interface ModelViewer {
   /** reposiciona os vértices: mesmo layout de `MdlSummary.positions` (9 floats por triângulo, espaço do jogo) */
   setVertexPositions(flat: ArrayLike<number>): void;
+  /** enquadra a câmera na pose atual (deformada) e volta à vista 3/4 da frente */
+  frame(): void;
   /** troca a textura de cada índice de `MdlSummary.textures` (família de skin): `map[base] = textura nova` */
   setTextureMap(map: number[]): void;
   /**
@@ -148,24 +151,89 @@ export function mountModelViewer3D(container: HTMLElement, initial: Model): Mode
     if (cmp) void applyCompare();
   });
 
-  // Enquadra a câmera na pose de repouso.
-  const box = restBounds(initial);
-  const center = box.getCenter(new THREE.Vector3());
-  const maxDim = Math.max(...box.getSize(new THREE.Vector3()).toArray(), 1);
-
+  // Câmera: enquadrada na pose que está na tela (o bind pose fica com a origem nos pés, a
+  // animação com a origem no quadril — enquadrar o bind deixava o modelo baixo e pequeno).
   const camera = new THREE.PerspectiveCamera(60, 1, 0.5, 100000);
-  const dist = (maxDim / 2 / Math.tan((camera.fov * Math.PI) / 360)) * 1.6;
-  camera.position.set(center.x + dist * 0.8, center.y + dist * 0.5, center.z + dist);
-  camera.near = Math.max(0.1, dist / 1000);
-  camera.far = Math.max(1000, dist * 20);
-  camera.updateProjectionMatrix();
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
-  controls.target.copy(center);
-  controls.minDistance = Math.max(1, dist / 10);
-  controls.maxDistance = dist * 6;
-  controls.update();
+
+  /** centro/raio da pose atual; o enquadramento acompanha o modelo animado */
+  const focus = { center: new THREE.Vector3(), radius: 40 };
+  /** maior dimensão da pose atual (escala dos marcadores de attachment) */
+  let maxDim = 80;
+  /** direções padrão (mundo Y-up); no GoldSrc o modelo olha para +X (yaw 0) */
+  const VIEW_DIRS = {
+    hero: [1, 0.22, 0.55],
+    front: [1, 0, 0],
+    side: [0, 0, 1],
+    back: [-1, 0, 0],
+    top: [0, 1, 1e-4],
+  } as const;
+  type ViewName = keyof typeof VIEW_DIRS;
+
+  function measure() {
+    const box = rig.bounds();
+    const size = box.getSize(new THREE.Vector3());
+    focus.center.copy(box.getCenter(new THREE.Vector3()));
+    focus.radius = Math.max(size.length() / 2, 1);
+    maxDim = Math.max(size.x, size.y, size.z, 1);
+    controls.minDistance = focus.radius * 0.35;
+    controls.maxDistance = focus.radius * 12;
+  }
+
+  /** distância que faz a esfera do modelo caber no campo de visão, com 10% de folga */
+  function fitDistance(): number {
+    return (focus.radius / Math.sin((camera.fov * Math.PI) / 360)) * 1.1;
+  }
+
+  function lookFrom(dir: readonly number[], distance = fitDistance()) {
+    const v = new THREE.Vector3(dir[0]!, dir[1]!, dir[2]!).normalize();
+    camera.up.set(0, 1, 0);
+    controls.target.copy(focus.center);
+    camera.position.copy(focus.center).addScaledVector(v, Math.max(distance, focus.radius * 0.6));
+    camera.near = Math.max(0.1, distance / 200);
+    camera.far = Math.max(1000, distance * 40);
+    camera.updateProjectionMatrix();
+    controls.update();
+  }
+
+  measure();
+  lookFrom(VIEW_DIRS.hero);
+
+  // atalhos de vista (frente, lado, costas, topo) e "enquadrar"
+  const views = document.createElement("div");
+  views.className = "mdl-views";
+  views.setAttribute("role", "group");
+  views.setAttribute("aria-label", t("mdl.viewsAria"));
+  const VIEW_BUTTONS: [ViewName | "fit", string][] = [
+    ["hero", "mdl.view.hero"],
+    ["front", "mdl.view.front"],
+    ["side", "mdl.view.side"],
+    ["back", "mdl.view.back"],
+    ["top", "mdl.view.top"],
+    ["fit", "mdl.view.fit"],
+  ];
+  for (const [id, key] of VIEW_BUTTONS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "mdl-view-btn";
+    b.dataset.view = id;
+    b.textContent = t(key);
+    b.title = t(`${key}.hint`);
+    b.addEventListener("click", () => {
+      if (id === "fit") frame();
+      else lookFrom(VIEW_DIRS[id], id === "hero" ? fitDistance() : camera.position.distanceTo(controls.target));
+    });
+    views.append(b);
+  }
+  container.append(views);
+
+  /** enquadra na pose atual e volta à vista 3/4 da frente */
+  function frame() {
+    measure();
+    lookFrom(VIEW_DIRS.hero);
+  }
 
   // ---- overlays: hitboxes (12 arestas por caixa, cor do grupo) e attachments (cruz + nome)
   const hitLines = new THREE.LineSegments(
@@ -221,7 +289,9 @@ export function mountModelViewer3D(container: HTMLElement, initial: Model): Mode
   attGroup.visible = false;
   scene.add(attGroup);
   let attNames = "";
-  const armLen = maxDim * 0.025;
+
+  /** meia-aresta da cruz do attachment, proporcional ao modelo */
+  const armLen = () => maxDim * 0.025;
 
   const clearAttachments = () => {
     for (const child of [...attGroup.children]) {
@@ -246,10 +316,11 @@ export function mountModelViewer3D(container: HTMLElement, initial: Model): Mode
     if (key !== attNames) {
       clearAttachments();
       for (let i = 0; i < n; i++) {
+        const a = armLen();
         const cross = new THREE.LineSegments(
           new THREE.BufferGeometry().setAttribute(
             "position",
-            new THREE.Float32BufferAttribute([-armLen, 0, 0, armLen, 0, 0, 0, -armLen, 0, 0, armLen, 0, 0, 0, -armLen, 0, 0, armLen], 3),
+            new THREE.Float32BufferAttribute([-a, 0, 0, a, 0, 0, 0, -a, 0, 0, a, 0, 0, 0, -a, 0, 0, a], 3),
           ),
           new THREE.LineBasicMaterial({ color: 0xffd24a, depthTest: false, transparent: true }),
         );
@@ -437,6 +508,7 @@ export function mountModelViewer3D(container: HTMLElement, initial: Model): Mode
     rig.dispose();
     rig = new MdlRig(model);
     scene.add(rig.root);
+    measure(); // mantém o centro do enquadramento coerente com o novo bodygroup (sem mexer na câmera)
     baseTextures = textures;
     extraSets = new Map();
     primary = rig.addLook(textureMap, baseTextures);
@@ -513,6 +585,7 @@ export function mountModelViewer3D(container: HTMLElement, initial: Model): Mode
 
   return {
     setVertexPositions,
+    frame,
     setTextureMap,
     setModel,
     setHitboxes,
@@ -537,6 +610,7 @@ export function mountModelViewer3D(container: HTMLElement, initial: Model): Mode
       pruneExtraSets([]);
       pickListeners.clear();
       overlay.remove();
+      views.remove();
       hitLines.geometry.dispose();
       (hitLines.material as THREE.Material).dispose();
       clearAttachments();
