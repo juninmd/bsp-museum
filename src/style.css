@@ -1856,6 +1856,154 @@ textarea {
   padding: 0;
   max-height: 24rem;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.uv-item {
+  width: 100%;
+  display: flex;
+  gap: 0.45rem;
+  align-items: flex-start;
+  padding: 0.3rem;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.uv-item:hover {
+  border-color: var(--accent);
+}
+
+.uv-item.on {
+  border-color: var(--warm);
+  box-shadow: 0 0 0 1px var(--warm);
+}
+
+.uv-item.unused {
+  opacity: 0.6;
+}
+
+.uv-thumb {
+  width: 2.6rem;
+  height: 2.6rem;
+  flex: none;
+  object-fit: contain;
+  image-rendering: pixelated;
+  background: var(--well);
+  border-radius: 4px;
+}
+
+.uv-item-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.uv-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uv-meta {
+  color: var(--dim);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.uv-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+}
+
+.uv-flag {
+  font-size: 0.64rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--dim);
+}
+
+.uv-flag.f-chrome,
+.uv-flag.f-additive,
+.uv-flag.f-masked {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.uv-flag.f-remap {
+  color: var(--warm);
+  border-color: var(--warm);
+}
+
+.uv-stage {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.uv-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.8rem;
+  min-height: 1.5rem;
+}
+
+.uv-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.uv-canvas-wrap {
+  position: relative;
+  height: 22rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--well);
+}
+
+.uv-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.uv-canvas.panning {
+  cursor: grabbing;
+}
+
+.uv-info {
+  color: var(--dim);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .uv {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .uv-list {
+    max-height: 12rem;
+  }
+}
+
 /* ---- painel "Sons do mapa" (camada "Sons 3D") ---- */
 .snd-panel {
   position: absolute;
@@ -1918,52 +2066,6 @@ textarea {
   gap: 0.3rem;
 }
 
-.uv-item {
-  width: 100%;
-  display: flex;
-  gap: 0.45rem;
-  align-items: flex-start;
-  padding: 0.3rem;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-}
-
-.uv-item:hover {
-  border-color: var(--accent);
-}
-
-.uv-item.on {
-  border-color: var(--warm);
-  box-shadow: 0 0 0 1px var(--warm);
-}
-
-.uv-item.unused {
-  opacity: 0.6;
-}
-
-.uv-thumb {
-  width: 2.6rem;
-  height: 2.6rem;
-  flex: none;
-  object-fit: contain;
-  image-rendering: pixelated;
-  background: var(--well);
-  border-radius: 4px;
-}
-
-.uv-item-body {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-
-.uv-name {
-  font-weight: 600;
 .snd-enable-btn {
   background: var(--accent);
   color: #fff;
@@ -2100,95 +2202,6 @@ textarea {
   white-space: nowrap;
 }
 
-.uv-meta {
-  color: var(--dim);
-  font-size: 0.68rem;
-  font-variant-numeric: tabular-nums;
-  display: flex;
-  gap: 0.5rem;
-}
-
-.uv-flags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.2rem;
-}
-
-.uv-flag {
-  font-size: 0.64rem;
-  padding: 0 0.3rem;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  color: var(--dim);
-}
-
-.uv-flag.f-chrome,
-.uv-flag.f-additive,
-.uv-flag.f-masked {
-  color: var(--text);
-  border-color: var(--accent);
-}
-
-.uv-flag.f-remap {
-  color: var(--warm);
-  border-color: var(--warm);
-}
-
-.uv-stage {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.uv-tools {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem 0.8rem;
-  min-height: 1.5rem;
-}
-
-.uv-check {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-
-.uv-canvas-wrap {
-  position: relative;
-  height: 22rem;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--well);
-}
-
-.uv-canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-  cursor: crosshair;
-  touch-action: none;
-}
-
-.uv-canvas.panning {
-  cursor: grabbing;
-}
-
-.uv-info {
-  color: var(--dim);
-  font-size: 0.72rem;
-  overflow-wrap: anywhere;
-}
-
-@media (max-width: 900px) {
-  .uv {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .uv-list {
-    max-height: 12rem;
 .snd-name:hover {
   text-decoration: underline;
 }

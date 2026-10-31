@@ -4,6 +4,8 @@ version = "0.7.0"
 description = "Galeria navegável do acervo de mapas GoldSrc: planta baixa, entidades e diagnóstico"
 edition = "2021"
 rust-version = "1.77"
+# binário principal do bundle (o outro [[bin]] é o servidor MCP)
+default-run = "bsp-museum"
 
 [lib]
 name = "bsp_museum_core"
