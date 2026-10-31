@@ -24,9 +24,56 @@ fn decodifica_bone_textura_e_triangulo() {
     assert_eq!(&model.positions[6..9], &[10.0, 1.0, 0.0]);
 }
 
+/// Monta um stream de comando com 4 vértices em linha (x = 0,1,2,3), todos no bone 0.
+fn stream_de_quatro(cmd: i16) -> (Vec<u8>, Vec<Vert>) {
+    let mut stream = Vec::new();
+    stream.extend_from_slice(&cmd.to_le_bytes());
+    for vi in 0..4i16 {
+        stream.extend_from_slice(&vi.to_le_bytes()); // vertindex
+        stream.extend_from_slice(&0i16.to_le_bytes()); // normindex
+        stream.extend_from_slice(&0i16.to_le_bytes()); // s
+        stream.extend_from_slice(&0i16.to_le_bytes()); // t
+    }
+    stream.extend_from_slice(&0i16.to_le_bytes()); // termina
+    let verts = (0..4)
+        .map(|i| Vert { world: [i as f32, 0.0, 0.0], local: [i as f32, 0.0, 0.0], bone: 0 })
+        .collect();
+    (stream, verts)
+}
+
 #[test]
-fn recusa_magic_errado() {
-    let mut data = synthetic_mdl();
+fn comando_positivo_e_tira_de_triangulos_consecutivos() {
+    // count > 0 = strip: (0,1,2) e depois (2,1,3) — a tira cobre a faixa, sem buraco.
+    let (stream, verts) = stream_de_quatro(4);
+    let mut model = MdlModel::default();
+    read_triangle_stream(&stream, 0, &verts, 0, 1.0, 1.0, &mut model).unwrap();
+
+    assert_eq!(model.texindex, vec![0, 0]);
+    assert_eq!(model.positions.len(), 18);
+    // 1º triângulo: (0,1,2) — mesma ordem do teste do modelo sintético.
+    assert_eq!(&model.positions[0..3], &[0.0, 0.0, 0.0]);
+    assert_eq!(&model.positions[3..6], &[1.0, 0.0, 0.0]);
+    assert_eq!(&model.positions[6..9], &[2.0, 0.0, 0.0]);
+    // 2º triângulo: (2,1,3) — compartilha a aresta (1,2) com o primeiro.
+    assert_eq!(&model.positions[9..12], &[2.0, 0.0, 0.0]);
+    assert_eq!(&model.positions[12..15], &[1.0, 0.0, 0.0]);
+    assert_eq!(&model.positions[15..18], &[3.0, 0.0, 0.0]);
+}
+
+#[test]
+fn comando_negativo_e_leque_com_pivo_no_primeiro_vertice() {
+    // count < 0 = fan: (0,1,2), (0,2,3) e (0,3,4)…
+    let (stream, verts) = stream_de_quatro(-4);
+    let mut model = MdlModel::default();
+    read_triangle_stream(&stream, 0, &verts, 0, 1.0, 1.0, &mut model).unwrap();
+
+    assert_eq!(model.texindex, vec![0, 0]);
+    assert_eq!(&model.positions[0..3], &[0.0, 0.0, 0.0]);
+    assert_eq!(&model.positions[9..12], &[0.0, 0.0, 0.0], "2º triângulo repete o pivô");
+}
+
+#[test]
+fn recusa_magic_errado() {    let mut data = synthetic_mdl();
     data[0..4].copy_from_slice(b"NOPE");
     assert_eq!(parse(&data).unwrap_err(), MdlError::BadMagic);
 }
