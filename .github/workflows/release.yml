@@ -25,7 +25,7 @@ jobs:
           - { label: macOS (Intel), os: macos-13, args: "--target x86_64-apple-darwin" }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Dependências do Tauri (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -41,7 +41,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -61,7 +61,7 @@ jobs:
           - { label: macOS (Apple Silicon), os: macos-latest, ext: "", asset: macos-arm64 }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

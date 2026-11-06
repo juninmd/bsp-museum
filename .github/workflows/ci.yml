@@ -17,7 +17,7 @@ jobs:
     name: Frontend (typecheck, testes, build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
@@ -28,7 +28,7 @@ jobs:
     name: Backend (clippy, testes)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Dependências do Tauri
         run: |
           sudo apt-get update
@@ -52,7 +52,7 @@ jobs:
     name: Núcleo + MCP (sem GTK)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
