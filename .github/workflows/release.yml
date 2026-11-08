@@ -1,8 +1,10 @@
 name: Release
 
 # Gera os instaladores (Windows, Linux, macOS) ao empurrar uma tag `vX.Y.Z`.
-# A atualização automática (tauri-plugin-updater) não está ligada: ela exige um par de
-# chaves de assinatura e um endpoint de publicação que só o mantenedor pode criar.
+# Atualização automática (tauri-plugin-updater): só liga com o secret TAURI_SIGNING_PRIVATE_KEY.
+# Sem ele o build sai sem assinatura e o app avisa que a atualização não está configurada.
+# Com ele, src-tauri/tauri.updater.conf.json (pubkey + endpoint) entra no build e o tauri-action
+# gera latest.json no release: publicar o rascunho é o que o torna acessível ao app.
 
 on:
   push:
@@ -35,6 +37,22 @@ jobs:
             libjavascriptcoregtk-4.1-dev librsvg2-dev patchelf
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      - name: Atualização automática (só com a chave de assinatura)
+        id: updater
+        shell: bash
+        env:
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY ausente: build sem atualização automática."
+            echo "args=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if grep -q PREENCHER src-tauri/tauri.updater.conf.json; then
+            echo "::error::src-tauri/tauri.updater.conf.json ainda tem a chave pública de exemplo"
+            exit 1
+          fi
+          echo "args=--config src-tauri/tauri.updater.conf.json" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
@@ -44,11 +62,15 @@ jobs:
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "bsp-museum ${{ github.ref_name }}"
           releaseDraft: true
-          args: ${{ matrix.args }}
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.args }} ${{ steps.updater.outputs.args }}
 
   mcp:
     name: Servidor MCP (${{ matrix.label }})

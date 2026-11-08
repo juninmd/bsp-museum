@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { ask, open } from "@tauri-apps/plugin-dialog";
 import "./style-explorer.css";
 import { applyStatic, detectLang, getLang, modeLabel, ruleLabel, setLang, t } from "./i18n.ts";
 import {
@@ -13,6 +13,7 @@ import {
   type SortKey,
 } from "./lib/filters.ts";
 import { fmtSize } from "./lib/report.ts";
+import { checkForUpdate, installUpdate } from "./lib/updates.ts";
 import { annotationOf, applySettings, maps, saveSettings, setMaps, settings, updateAnnotation } from "./store.ts";
 import type { Lang, MapDetail, MapSummary, Settings, Theme } from "./types.ts";
 import { openAudit } from "./ui/audit.ts";
@@ -36,6 +37,7 @@ const compareBtn = document.querySelector<HTMLButtonElement>("#compare")!;
 const auditBtn = document.querySelector<HTMLButtonElement>("#audit")!;
 const langBtn = document.querySelector<HTMLButtonElement>("#lang-toggle")!;
 const themeBtn = document.querySelector<HTMLButtonElement>("#theme-toggle")!;
+const updateBtn = document.querySelector<HTMLButtonElement>("#update-toggle")!;
 const slotsInput = document.querySelector<HTMLInputElement>("#slots")!;
 const drawer = document.querySelector<HTMLElement>("#drawer")!;
 const drawerBody = document.querySelector<HTMLElement>("#drawer-body")!;
@@ -428,6 +430,31 @@ themeBtn.addEventListener("click", async () => {
   applyTheme(next);
   await saveSettings();
 });
+
+/** Manual: pergunta antes de instalar. Automática (ao abrir): só avisa na barra de status; falhas ficam quietas. */
+async function runUpdate(manual: boolean): Promise<void> {
+  if (manual) setStatus(t("update.checking"));
+  try {
+    const info = await checkForUpdate();
+    if (!info.available) {
+      if (manual) setStatus(t("update.upToDate", info.current));
+      return;
+    }
+    if (!manual) {
+      setStatus(t("update.available", info.latest));
+      return;
+    }
+    const notes = info.notes ? `\n\n${info.notes}` : "";
+    const yes = await ask(t("update.confirm", info.latest, notes), { title: t("update.title"), kind: "info" });
+    if (!yes) return;
+    setStatus(t("update.installing", info.latest));
+    await installUpdate();
+  } catch (e) {
+    if (manual) setStatus(t("update.failed", String(e)), "error");
+  }
+}
+updateBtn.addEventListener("click", () => void runUpdate(true));
+setTimeout(() => void runUpdate(false), 8_000);
 
 closeDrawerBtn.addEventListener("click", closeDrawer);
 scrim.addEventListener("click", closeDrawer);
