@@ -507,5 +507,7 @@ JSON gerados pelo backend em Rust (WebGL via SwiftShader).
   (`lip`, eixo de rotação, deslocamento) foram escritas de memória do HLSDK — a VDC bloqueou a consulta automática.
 - O brilho do lightmap usa fator fixo 2× (convenção *overbright* do Quake); não há gama configurável.
 - Limites do motor (`limite-motor`) são valores de referência do compilador/engine, não lidos do jogo.
-- Atualização automática (`tauri-plugin-updater`) não está ligada: exige par de chaves de assinatura e um
-  endpoint de publicação do mantenedor. Os instaladores saem pelo workflow `release.yml`.
+- Atualização automática pelas releases do GitHub (`tauri-plugin-updater`): o botão ↻ verifica e, após confirmação,
+  instala e reinicia. Liga com os secrets `TAURI_SIGNING_PRIVATE_KEY` e `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` e a chave
+  pública em `src-tauri/tauri.updater.conf.json`. Sem o secret, os instaladores saem sem atualização automática.
+  Publicar o rascunho do release torna o `latest.json` acessível ao app.

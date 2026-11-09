@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Permissões da janela principal: só o diálogo de pasta/arquivo, o resto passa pelos comandos.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]
+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save", "dialog:allow-ask"]
 }

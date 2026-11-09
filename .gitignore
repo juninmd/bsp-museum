@@ -6,3 +6,6 @@ src-tauri/gen/
 .env
 .env.*
 !.env.example
+
+# Chave privada de assinatura do updater: só no secret do GitHub.
+*.key

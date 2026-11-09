@@ -23,7 +23,7 @@ path = "src/bin/mcp.rs"
 [features]
 default = ["app"]
 # interface gráfica (Tauri). Sem ela só o núcleo e o servidor MCP compilam (sem GTK/WebKit).
-app = ["dep:tauri", "dep:tauri-plugin-dialog"]
+app = ["dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-plugin-updater", "dep:rustls"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -31,6 +31,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [], optional = true }
 tauri-plugin-dialog = { version = "2", optional = true }
+# Atualização pelo GitHub Releases. Mesmo TLS do canto-widget: rustls com ring, instalado em update.rs.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 flate2 = "1"

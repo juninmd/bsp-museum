@@ -34,7 +34,7 @@ cargo clippy --no-default-features --all-targets -- -D warnings && cargo test --
 - Não commitar `.env*`, chaves ou caminhos locais; `src-tauri/target/`, `dist/` e `node_modules/` ficam fora do git.
 - Não editar `bun.lock` nem `src-tauri/Cargo.lock` à mão; regenere com `bun install` / `cargo`.
 - Não suprimir warning do clippy nem pular teste para passar o gate.
-- Não ligar o updater do Tauri sem o par de chaves de assinatura (ver `release.yml`).
+- Não ligar o updater do Tauri sem o par de chaves: a privada fica só no secret `TAURI_SIGNING_PRIVATE_KEY`; a pública vai em `src-tauri/tauri.updater.conf.json` (ver `release.yml`).
 
 <!-- base-actions-main-policy -->
 ## GitHub Actions — padrão obrigatório (@main)

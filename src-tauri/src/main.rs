@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::Manager;
 
+mod update;
+
 #[derive(Default)]
 struct Cache {
     /// path -> SVG da miniatura, memorizado enquanto o app está aberto
@@ -417,6 +419,7 @@ fn clear_cache(state: tauri::State<'_, AppState>) -> Result<usize, String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let cache_dir = app.path().app_cache_dir().unwrap_or_else(|_| PathBuf::from(".cache")).join("thumbs");
             let config_file = app
@@ -431,6 +434,7 @@ fn main() {
                 .unwrap_or_else(|_| PathBuf::from(".cache"))
                 .join("index.json");
             app.manage(AppState { cache: Mutex::new(Cache::default()), cache_dir, config_file, index_file });
+            app.manage(update::PendingUpdate::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -463,7 +467,9 @@ fn main() {
             read_mod_audio,
             load_settings,
             save_settings,
-            clear_cache
+            clear_cache,
+            update::update_check,
+            update::update_install
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o bsp-museum");

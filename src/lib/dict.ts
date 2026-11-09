@@ -1,6 +1,7 @@
 import { DICT_MODEL } from "./dict-model.ts";
 import { DICT_EXPLORER } from "./dict-explorer.ts";
 import { DICT_SOUND3D } from "./dict-sound3d.ts";
+import { DICT_UPDATE } from "./dict-update.ts";
 
 /**
  * Textos da interface: `[português, inglês]`. `{0}`, `{1}`… são argumentos de `t()`.
@@ -282,4 +283,6 @@ export const DICT: Record<string, [string, string]> = {
   ...DICT_SKINS,
   // camada "Sons 3D" (áudio espacial) e painel "Sons do mapa"
   ...DICT_SOUND3D,
+  // botão de atualização (verificação pelas releases do GitHub)
+  ...DICT_UPDATE,
 };
