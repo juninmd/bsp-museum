@@ -584,7 +584,7 @@ pub(crate) fn rgba_png(width: usize, height: usize, rgba: &[u8]) -> Option<Strin
     Some(format!("data:image/png;base64,{png}"))
 }
 
-fn png_encode(width: usize, height: usize, rgba: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn png_encode(width: usize, height: usize, rgba: &[u8]) -> Option<Vec<u8>> {
     let stride = width.checked_mul(4)?;
     let mut scan = Vec::with_capacity((stride + 1) * height);
     for y in 0..height {

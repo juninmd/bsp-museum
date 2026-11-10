@@ -2,6 +2,7 @@ import { DICT_MODEL } from "./dict-model.ts";
 import { DICT_EXPLORER } from "./dict-explorer.ts";
 import { DICT_SOUND3D } from "./dict-sound3d.ts";
 import { DICT_UPDATE } from "./dict-update.ts";
+import { DICT_PALETTE } from "./dict-palette.ts";
 
 /**
  * Textos da interface: `[português, inglês]`. `{0}`, `{1}`… são argumentos de `t()`.
@@ -285,4 +286,5 @@ export const DICT: Record<string, [string, string]> = {
   ...DICT_SOUND3D,
   // botão de atualização (verificação pelas releases do GitHub)
   ...DICT_UPDATE,
+  ...DICT_PALETTE,
 };

@@ -19,6 +19,7 @@ pub mod stdio;
 pub mod tools;
 mod tools_files;
 mod tools_map;
+mod tools_view;
 #[cfg(test)]
 pub mod testutil;
 #[cfg(test)]

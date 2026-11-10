@@ -17,6 +17,7 @@ pub mod modfiles;
 pub mod nav;
 pub mod pak;
 pub mod radar;
+pub mod render3d;
 pub mod resources;
 pub mod image;
 pub mod scene;

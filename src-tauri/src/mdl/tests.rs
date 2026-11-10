@@ -118,8 +118,8 @@ fn arquivo_de_lixo_nao_causa_panic() {
 ///   (`valid=2,total=2: 0,2` e `valid=1,total=2: 4`, ou seja quadros 0,2,4,4);
 ///   rotZ do arm num trecho só (`0,50,100,157` x escala 0,01 rad);
 /// - `ext` (grupo externo 1): os dados vivem em `ext_file()`.
-struct Syn {
-    data: Vec<u8>,
+pub(super) struct Syn {
+    pub(super) data: Vec<u8>,
     /// fim da tabela de sequências: o que `parse` precisa ler
     parse_end: usize,
     /// offset do `mstudioseqdesc_t` de `idle`
@@ -180,7 +180,7 @@ fn bone(name: &str, parent: i32, value: [f32; 6]) -> Vec<u8> {
     b
 }
 
-fn synthetic_anim_mdl() -> Syn {
+pub(super) fn synthetic_anim_mdl() -> Syn {
     let mut b = vec![0u8; 244]; // header, preenchido no fim
 
     let bone_index = off(&b);
