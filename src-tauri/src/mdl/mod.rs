@@ -1312,6 +1312,12 @@ fn push_triangle(
 /// com 1 submodel de 1 triângulo, 1 sequência. `pub(crate)` pra ser reusado
 /// tanto pelos testes deste módulo quanto pelo teste de integração em
 /// `catalog::mesh` (props no mapa).
+/// `.mdl` sintético com duas sequências animadas e texturas (para testar posagem/render).
+#[cfg(test)]
+pub(crate) fn synthetic_anim_data() -> Vec<u8> {
+    tests::synthetic_anim_mdl().data
+}
+
 #[cfg(test)]
 pub(crate) fn synthetic_mdl() -> Vec<u8> {
     fn push_str_fixed(out: &mut Vec<u8>, s: &str, n: usize) {

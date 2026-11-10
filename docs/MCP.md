@@ -123,12 +123,24 @@ relativos a uma raiz permitida.
 | `audio_info(path)` | metadados de WAV/MP3 (sem o envelope da onda) |
 | `nav_info(path, bsp_path?, max_areas?)` | cabeçalho/contagens do `.nav` e se bate com o `.bsp` |
 | `demo_info(path)` | cabeçalho e diretório da demo `.dem` |
+| `map_view(path, preset?, x/y/z/yaw/pitch/fov?, clip_z?, lighting?, width?)` | **imagem**: render 3D do mapa por software, com texturas (BSP + WAD) e lightmap. `preset`: `overview`, `top`, `spawn_ct`, `spawn_t`, `free`; spawns como bolinhas |
+| `model_view(path, yaw?, pitch?, skin?, body?, sequence?, frame?, top?, bottom?, size?)` | **imagem**: o `.mdl` com a skin, em repouso ou num quadro de uma sequência |
+| `model_texture(path, index?, skin?)` | **imagem**: textura/skin do modelo |
+| `image_view(path)` | **imagem**: `.tga`/`.bmp`/`.lmp` decodificado (céu, spray, HUD) |
+| `wad_sheet(path, query?, offset?, limit?, cell?, columns?)` | **imagem**: folha de contato das texturas do WAD, com `cells` (nome por célula) |
 
 **Respostas grandes.** O teto padrão é 48 000 bytes de JSON por chamada (`--max-output`). Listas têm
 `offset`/`limit` e devolvem `total`, `returned`, `next_offset` e `truncated`. Se mesmo assim a resposta
 passar do teto, o servidor corta as maiores listas pela metade até caber e marca `truncated: true`
 com `truncation.cuts` (caminho, total, quantos ficaram) — o agente sabe que deve paginar ou filtrar.
 Strings com mais de 2000 caracteres são cortadas.
+
+### Ver imagens (Claude Code)
+
+As ferramentas de imagem devolvem `content[type=image]` (PNG), que o Claude Code mostra ao modelo. O render é por CPU
+(`render3d`), sem GPU e sem janela: funciona em servidor/CI. Exemplos: `prints/v9-mcp-map-view-*.png`.
+Coordenadas GoldSrc: Z para cima; yaw 0 olha para +X. Fluxo típico: `map_view overview` → `map_entities` →
+`map_view free` perto do objetivo.
 
 ## Recursos
 
@@ -151,6 +163,7 @@ Strings com mais de 2000 caracteres são cortadas.
 - `audit_map_pack(dir, slots?)` — revisar uma pasta de mapas para servidor CS 1.6.
 - `fastdl_plan(dir)` — plano de FastDL: o que publicar, tamanhos, ausentes, o que cortar.
 - `explain_map(path)` — explicar um mapa (modo, layout, objetivos, problemas, recursos).
+- `tour_map(path)` — passeio visual: renders `map_view` (visão geral, planta, spawns, objetivos), radar e texturas.
 
 ## Modelo de segurança
 

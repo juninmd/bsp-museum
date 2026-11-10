@@ -90,6 +90,10 @@ impl<'a> Args<'a> {
         v.as_u64().map(|n| n as usize).or_else(|| v.as_f64().filter(|f| *f >= 0.0).map(|f| f as usize))
     }
 
+    pub fn opt_f32(&self, key: &str) -> Option<f32> {
+        self.map.get(key).and_then(Value::as_f64).map(|f| f as f32)
+    }
+
     pub fn usize_or(&self, key: &str, default: usize) -> usize {
         self.opt_usize(key).unwrap_or(default)
     }
@@ -165,6 +169,7 @@ pub fn registry(cfg: &Config) -> Vec<Tool> {
     }];
     v.extend(super::tools_map::tools(cfg));
     v.extend(super::tools_files::tools(cfg));
+    v.extend(super::tools_view::tools(cfg));
     v
 }
 
@@ -217,7 +222,7 @@ mod tests {
             "list_maps", "map_summary", "map_diagnostics", "map_entities", "map_resources", "map_textures", "map_scene",
             "map_volumes", "map_hulls_info", "audit_folder", "compare_maps", "map_radar", "wad_list", "wad_texture",
             "wad_usage", "sprite_info", "model_info", "mod_files", "mod_file_analyze", "audio_info", "nav_info",
-            "demo_info", "server_checklist",
+            "demo_info", "server_checklist", "map_view", "model_view", "model_texture", "image_view", "wad_sheet",
         ] {
             assert!(have.contains(&want), "falta a ferramenta {want}");
         }

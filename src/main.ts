@@ -20,7 +20,8 @@ import { openAudit } from "./ui/audit.ts";
 import { openCompare } from "./ui/compare.ts";
 import { detailHtml, disposeDetail, wireDetail } from "./ui/detail.ts";
 import { escapeHtml, trapTab } from "./ui/dom.ts";
-import { initModal, isModalOpen } from "./ui/modal.ts";
+import { initModal, isModalOpen, openModal } from "./ui/modal.ts";
+import { initPalette, type PaletteCommand } from "./ui/palette.ts";
 import { initSkins } from "./ui/skins/index.ts";
 
 const gallery = document.querySelector<HTMLElement>("#gallery")!;
@@ -460,7 +461,86 @@ closeDrawerBtn.addEventListener("click", closeDrawer);
 scrim.addEventListener("click", closeDrawer);
 initModal();
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !isModalOpen() && !drawer.hidden) closeDrawer();
+  if (e.key === "Escape" && !isModalOpen() && !drawer.hidden && !palette.isOpen()) closeDrawer();
+});
+
+// ------------------------------------------------------------------ paleta de comandos e atalhos
+
+function showShortcuts() {
+  const { body } = openModal(t("sc.title"));
+  const rows: [string, string][] = [
+    ["Ctrl/⌘ + K", t("sc.palette")],
+    ["/", t("sc.palette")],
+    ["↑ ↓ Enter", t("sc.arrows")],
+    ["F", t("sc.search")],
+    ["?", t("sc.help")],
+    ["Esc", t("sc.esc")],
+  ];
+  body.innerHTML = `<dl class="shortcuts">${rows.map(([k, d]) => `<dt><kbd>${escapeHtml(k)}</kbd></dt><dd>${escapeHtml(d)}</dd>`).join("")}</dl><p class="dim">${escapeHtml(t("sc.view3d"))}</p>`;
+}
+
+function paletteSource(): PaletteCommand[] {
+  const act = (id: string, label: string, run: () => void | Promise<void>, keywords = ""): PaletteCommand => ({
+    id,
+    label,
+    group: "action",
+    keywords,
+    run,
+  });
+  const cmds: PaletteCommand[] = [
+    act("go-maps", t("pal.go.maps"), () => switchView("maps")),
+    act("go-skins", t("pal.go.skins"), () => switchView("skins"), "mdl wad spr sprite sound audio modelo skin textura"),
+    act("focus-search", t("pal.focusSearch"), () => {
+      switchView("maps");
+      search.focus();
+      search.select();
+    }),
+    act("audit", t("pal.audit"), () => auditBtn.click()),
+    act("pick", t("pal.pick"), () => pickButton.click()),
+    act("theme", t("pal.theme"), () => themeBtn.click(), t("pal.theme.kw")),
+    act("lang", t("pal.lang"), () => langBtn.click(), t("pal.lang.kw")),
+    act("update", t("pal.update"), () => updateBtn.click()),
+    act("favs", t("pal.favs"), () => favOnly.click()),
+    act("clear", t("pal.clear"), () => {
+      Object.assign(filters, EMPTY_FILTERS);
+      search.value = "";
+      for (const s of [modeFilter, sevFilter, ruleFilter, tagFilter]) s.value = "";
+      favOnly.setAttribute("aria-pressed", "false");
+      favOnly.textContent = "☆";
+      render();
+    }),
+    act("shortcuts", t("pal.shortcuts"), showShortcuts, "help ajuda ? keys teclas"),
+  ];
+  if (compareSet.length === 2) cmds.push(act("compare", t("pal.compare"), () => compareBtn.click()));
+  for (const m of maps) {
+    cmds.push({
+      id: `map:${m.path}`,
+      label: m.name,
+      hint: [m.title, modeLabel(m.mode)].filter(Boolean).join(" · "),
+      group: "map",
+      keywords: m.path,
+      run: () => {
+        switchView("maps");
+        return openDetail(m);
+      },
+    });
+  }
+  return cmds;
+}
+
+const palette = initPalette(paletteSource, document.querySelector<HTMLElement>("#palette-btn"));
+document.addEventListener("keydown", (e) => {
+  const n = e.target as HTMLElement | null;
+  const typing = !!n && (n.tagName === "INPUT" || n.tagName === "TEXTAREA" || n.tagName === "SELECT" || n.isContentEditable);
+  if (typing || e.ctrlKey || e.metaKey || e.altKey || palette.isOpen() || isModalOpen()) return;
+  if (e.key === "?") {
+    e.preventDefault();
+    showShortcuts();
+  } else if (e.key.toLowerCase() === "f" && !mapControls.hidden) {
+    e.preventDefault();
+    search.focus();
+    search.select();
+  }
 });
 
 void (async () => {

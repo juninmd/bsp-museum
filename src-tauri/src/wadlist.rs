@@ -302,7 +302,7 @@ pub fn list_from_reader<R: Read + Seek>(
             transparent: kind.is_texture() && raw.name.starts_with('{'),
             size: raw.disk_size,
             compressed,
-            decodable: !compressed && (kind.is_texture() || kind == WadKind::Qpic),
+            decodable: !compressed && (kind.is_texture() || kind == WadKind::Qpic || kind == WadKind::Font),
         });
     }
     Ok(WadListing {
@@ -408,9 +408,9 @@ pub fn texture_from_reader<R: Read + Seek>(
     if raw.compression != 0 {
         return Err(WadError::Invalid(format!("lump {} está comprimido (não suportado)", raw.name)));
     }
-    if !(kind.is_texture() || kind == WadKind::Qpic) {
+    if !(kind.is_texture() || kind == WadKind::Qpic || kind == WadKind::Font) {
         return Err(WadError::Invalid(format!(
-            "lump {} é do tipo {:?} (0x{:02X}); só miptex, decal e qpic são decodificados",
+            "lump {} é do tipo {:?} (0x{:02X}); só miptex, decal, qpic e fonte são decodificados",
             raw.name, kind, raw.type_code
         )));
     }
@@ -421,11 +421,32 @@ pub fn texture_from_reader<R: Read + Seek>(
         return Err(WadError::Invalid(format!("lump {} aponta para fora do arquivo", raw.name)));
     }
     let lump = read_at(r, raw.pos, raw.disk_size as usize)?;
+    if kind == WadKind::Font {
+        let (png, width, height) = font_png(&lump).ok_or_else(|| WadError::Invalid(format!("fonte {} com layout inesperado", raw.name)))?;
+        return Ok(WadTexture { name: raw.name.clone(), kind, width, height, transparent: true, png, mips: Vec::new() });
+    }
     if kind == WadKind::Qpic {
         let (png, width, height) = crate::image::qpic_png(&lump).map_err(|e| WadError::Invalid(e.to_string()))?;
         return Ok(WadTexture { name: raw.name.clone(), kind, width, height, transparent: false, png, mips: Vec::new() });
     }
     decode_texture_lump(&lump, &raw.name, kind, raw.type_code, with_mips)
+}
+
+/// Atlas de uma fonte do console (lump `0x46`): `width, height, rowcount, rowheight` (4×i32),
+/// 256 × `{startoffset: u16, charwidth: u16}`, `width*height` pixels indexados, `u16 = 256`
+/// e a paleta de 768 bytes. O índice 255 é o fundo (transparente).
+pub(crate) fn font_png(lump: &[u8]) -> Option<(String, u32, u32)> {
+    let w = u32::from_le_bytes(lump.get(0..4)?.try_into().ok()?) as usize;
+    let h = u32::from_le_bytes(lump.get(4..8)?.try_into().ok()?) as usize;
+    if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE {
+        return None;
+    }
+    let pix_start = 16 + 256 * 4;
+    let pixels = lump.get(pix_start..pix_start + w * h)?;
+    let pal_start = pix_start + w * h + 2;
+    let palette = lump.get(pal_start..pal_start + 768)?;
+    let rgba = crate::bsp::palette::decode_indexed(pixels, palette, true)?;
+    Some((crate::bsp::rgba_png(w, h, &rgba)?, w as u32, h as u32))
 }
 
 /// PNG do mip0 da textura `name` do WAD (e dos mips 1-3 se `with_mips`).
@@ -682,7 +703,11 @@ mod tests {
         let mut font = Vec::new();
         font.extend_from_slice(&256u32.to_le_bytes());
         font.extend_from_slice(&128u32.to_le_bytes());
-        font.extend_from_slice(&[0; 40]);
+        font.extend_from_slice(&[0; 8]); // rowcount, rowheight
+        font.extend_from_slice(&[0; 1024]); // charinfo
+        font.extend_from_slice(&vec![1u8; 256 * 128]);
+        font.extend_from_slice(&256u16.to_le_bytes());
+        font.extend_from_slice(&[0; 768]);
         wad(
             b"WAD3",
             &[
@@ -697,6 +722,27 @@ mod tests {
                 lump("misterio", 0x99, vec![1, 2, 3]),
             ],
         )
+    }
+
+    #[test]
+    fn fonte_do_console_vira_atlas_png() {
+        let (w, h) = (4usize, 2usize);
+        let mut lump = Vec::new();
+        for v in [w as u32, h as u32, 1, 2] {
+            lump.extend_from_slice(&v.to_le_bytes());
+        }
+        lump.extend_from_slice(&[0u8; 1024]);
+        lump.extend_from_slice(&[1, 255, 1, 255, 255, 1, 255, 1]);
+        lump.extend_from_slice(&256u16.to_le_bytes());
+        let mut pal = vec![0u8; 768];
+        pal[3..6].copy_from_slice(&[200, 100, 50]);
+        lump.extend_from_slice(&pal);
+        let (png, pw, ph) = font_png(&lump).unwrap();
+        let (dw, dh, rgba) = crate::image::decode_png_rgba(&png);
+        assert_eq!((pw, ph, dw, dh), (4, 2, 4, 2));
+        assert_eq!(&rgba[0..4], &[200, 100, 50, 255]);
+        assert_eq!(rgba[7], 0, "índice 255 é fundo");
+        assert!(font_png(&lump[..100]).is_none());
     }
 
     #[test]
@@ -721,7 +767,7 @@ mod tests {
         assert!(logo.decodable && !logo.transparent);
         let font = by("fonts");
         assert_eq!((font.kind, font.type_code, font.width, font.height), (WadKind::Font, 0x46, 256, 128));
-        assert!(!font.decodable);
+        assert!(font.decodable);
         assert_eq!(by("conpic").kind, WadKind::Console);
         let other = by("misterio");
         assert_eq!((other.kind, other.width, other.height, other.decodable), (WadKind::Other, 0, 0, false));
@@ -800,9 +846,9 @@ mod tests {
         let (_, _, px) = decode_png_rgba(&t.png);
         assert_eq!(&px[0..8], &[1, 100, 254, 255, 2, 100, 253, 255]);
 
-        for name in ["fonts", "conpic", "misterio"] {
+        for name in ["conpic", "misterio"] {
             let err = tex(&bytes, name, false).unwrap_err().to_string();
-            assert!(err.contains("só miptex, decal e qpic"), "{name}: {err}");
+            assert!(err.contains("só miptex, decal, qpic e fonte"), "{name}: {err}");
         }
         assert!(tex(&bytes, "nao-existe", false).unwrap_err().to_string().contains("não existe"));
     }

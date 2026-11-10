@@ -70,6 +70,20 @@ Nenhuma variável guarda segredo. `.env*` está no `.gitignore`.
 `--help`, `--version` e um `export-context` real (pasta sem mapas, sem credencial) estão em
 [`docs/terminal.txt`](docs/terminal.txt).
 
+## Novidades da v0.9
+
+- **Claude Code enxerga o acervo.** Novas ferramentas MCP devolvem imagens: `map_view` (render 3D texturizado com
+  lightmap: visão geral, planta, olhos de um spawn ou câmera livre), `model_view`/`model_texture`, `image_view`
+  (TGA/BMP/LMP) e `wad_sheet` (folha de texturas), mais o prompt `tour_map`. Total: 29 ferramentas. Ver
+  [`docs/MCP.md`](docs/MCP.md).
+- **WAD**: fontes do console (lump `0x46`) agora são decodificadas.
+- **UI**: paleta de comandos (**Ctrl/⌘+K** ou `/`) com busca aproximada em mapas e comandos, atalhos (`F` filtra,
+  `?` lista) e botão no topo.
+
+| paleta de comandos | `map_view` (MCP) | `map_view` spawn CT (MCP) |
+|---|---|---|
+| ![paleta](prints/v9-paleta-busca-mapa.png) | ![overview](prints/v9-mcp-map-view-overview.png) | ![spawn](prints/v9-mcp-map-view-spawn.png) |
+
 ## Novidades da v0.7
 
 > Tudo abaixo foi escrito a partir do SDK/Xash3D e testado com arquivos **sintéticos**; nenhum arquivo da
@@ -89,7 +103,7 @@ Nenhuma variável guarda segredo. `.env*` está no `.gitignore`.
   forma de onda e loop; `.nav`, `.dem`, `liblist.gam`, `hud.txt`, `_detail.txt`, `mapcycle.txt`.
 - **`.mdl` completo**: bodygroups, bone controllers, blends, cores de time, chrome/aditivo/masked,
   hitboxes, attachments, eventos.
-- **Servidor MCP + exportação para agentes** (`bsp-museum-mcp`): 24 ferramentas somente leitura sobre mapas,
+- **Servidor MCP + exportação para agentes** (`bsp-museum-mcp`): 29 ferramentas somente leitura sobre mapas,
   WADs, sprites, modelos e arquivos do mod, mais `export-context` (`index.json`, `REPORT.md`, `fastdl.txt`,
   `AGENTS.md`). Também há o botão **exportar contexto p/ agentes** na auditoria. Detalhes em
   [`docs/MCP.md`](docs/MCP.md).

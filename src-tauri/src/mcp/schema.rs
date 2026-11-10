@@ -20,6 +20,10 @@ pub fn integer(desc: &str, min: i64, max: i64, default: i64) -> Value {
     json!({"type": "integer", "description": desc, "minimum": min, "maximum": max, "default": default})
 }
 
+pub fn number(desc: &str, min: f64, max: f64) -> Value {
+    json!({"type": "number", "description": desc, "minimum": min, "maximum": max})
+}
+
 pub fn boolean(desc: &str, default: bool) -> Value {
     json!({"type": "boolean", "description": desc, "default": default})
 }

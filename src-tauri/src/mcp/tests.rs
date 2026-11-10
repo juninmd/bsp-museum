@@ -759,7 +759,7 @@ fn prompts_lista_e_get() {
     let mut h = H::new(&t.0);
     let l = h.req("prompts/list", json!({}));
     let names: Vec<&str> = l["result"]["prompts"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["audit_map_pack", "fastdl_plan", "explain_map"]);
+    assert_eq!(names, ["audit_map_pack", "fastdl_plan", "explain_map", "tour_map"]);
     let g = h.req("prompts/get", json!({"name": "explain_map", "arguments": {"path": "cstrike/maps/de_museu.bsp"}}));
     assert_eq!(g["result"]["messages"][0]["role"], "user");
     assert!(g["result"]["messages"][0]["content"]["text"].as_str().unwrap().contains("map_summary"));
@@ -796,6 +796,87 @@ fn laco_de_linhas_responde_so_o_que_tem_id() {
     assert!(lines[3].contains("\"id\":3"));
 }
 
+/// PNG devolvido por uma ferramenta: `(largura, altura, rgba)` (decodifica via data URL).
+fn image_of(r: &Value, ix: usize) -> (usize, usize, Vec<u8>) {
+    assert_eq!(r["content"][ix]["type"], "image", "{r}");
+    let url = format!("data:image/png;base64,{}", r["content"][ix]["data"].as_str().unwrap());
+    let t = crate::render3d::decode_png_url(&url).expect("PNG RGBA válido");
+    (t.w, t.h, t.rgba)
+}
+
+fn painted(rgba: &[u8], bg: [u8; 3]) -> usize {
+    rgba.chunks_exact(4).filter(|p| p[0..3] != bg).count()
+}
+
+#[test]
+fn map_view_desenha_overview_e_spawn() {
+    let t = mod_with_maps();
+    let mut h = H::new(&t.0);
+    let map = p(&t, "cstrike/maps/de_museu.bsp");
+    for preset in ["overview", "top", "spawn_ct", "spawn_t"] {
+        let r = h.call("map_view", json!({"path": map, "preset": preset, "width": 320}));
+        assert_eq!(r["isError"], json!(false), "{preset}: {r}");
+        let (w, hh, rgba) = image_of(&r, 1);
+        assert_eq!((w, hh), (320, 213), "{preset}");
+        assert!(painted(&rgba, [18, 20, 26]) > 200, "{preset}: imagem vazia");
+        assert_eq!(text_json(&r)["preset"], preset);
+    }
+    let r = h.call("map_view", json!({"path": map, "preset": "free", "x": 0, "y": 0, "z": 40, "yaw": 90, "pitch": -10, "lighting": false, "width": 200}));
+    assert_eq!(r["isError"], json!(false), "{r}");
+    assert_eq!(text_json(&r)["lightmap"], json!(false));
+    assert!(h.rpc_error("tools/call", json!({"name": "map_view", "arguments": {"path": map, "pitch": 120}}))["code"] == -32602);
+}
+
+#[test]
+fn model_view_texture_e_pose() {
+    let t = Tmp::new();
+    t.put("cstrike/models/p.mdl", &crate::mdl::synthetic_anim_data());
+    let mut h = H::new(&t.0);
+    let path = p(&t, "cstrike/models/p.mdl");
+    let r = h.call("model_view", json!({"path": path, "size": 200}));
+    assert_eq!(r["isError"], json!(false), "{r}");
+    let (w, hh, rgba) = image_of(&r, 1);
+    assert_eq!((w, hh), (200, 200));
+    assert!(painted(&rgba, [38, 42, 52]) > 100, "modelo não apareceu");
+    assert_eq!(text_json(&r)["pose"], "rest");
+    let r = h.call("model_view", json!({"path": path, "size": 200, "sequence": 0, "frame": 0, "yaw": 20, "pitch": 10}));
+    assert_eq!(r["isError"], json!(false), "{r}");
+    assert_eq!(text_json(&r)["pose"]["sequence"], 0);
+    let tx = h.call("model_texture", json!({"path": path}));
+    assert_eq!(tx["isError"], json!(false), "{tx}");
+    let (tw, th, _) = image_of(&tx, 1);
+    assert_eq!(tw as u64, text_json(&tx)["width"].as_u64().unwrap());
+    assert!(th > 0);
+    assert!(h.fail("model_texture", json!({"path": path, "index": 99})).contains("não existe"));
+}
+
+#[test]
+fn wad_sheet_e_image_view() {
+    let t = Tmp::new();
+    t.put("cstrike/extra.wad", &mini_wad());
+    // TGA 2x1 sem compressão, 24 bits (BGR): vermelho e azul
+    let mut tga = vec![0u8, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 24, 0x20];
+    tga.extend_from_slice(&[0, 0, 255, 255, 0, 0]);
+    t.put("cstrike/gfx/env/x.tga", &tga);
+    let mut h = H::new(&t.0);
+    let r = h.call("wad_sheet", json!({"path": p(&t, "cstrike/extra.wad"), "cell": 32, "columns": 2}));
+    assert_eq!(r["isError"], json!(false), "{r}");
+    let (w, hh, rgba) = image_of(&r, 1);
+    assert_eq!((w, hh), (40, 40));
+    assert!(rgba.len() == w * hh * 4);
+    let meta = text_json(&r);
+    assert_eq!(meta["cells"][0]["name"], "tex_a");
+    assert_eq!(meta["cells"][0]["drawn"], json!(true));
+    assert!(h.fail("wad_sheet", json!({"path": p(&t, "cstrike/extra.wad"), "query": "zzz"})).contains("nenhuma"));
+
+    let r = h.call("image_view", json!({"path": p(&t, "cstrike/gfx/env/x.tga")}));
+    assert_eq!(r["isError"], json!(false), "{r}");
+    let (iw, ih, px) = image_of(&r, 1);
+    assert_eq!((iw, ih), (2, 1));
+    assert_eq!(&px[0..4], &[255, 0, 0, 255]);
+    assert_eq!(text_json(&r)["width"], 2);
+}
+
 /// Gera os mapas sintéticos numa pasta, para sessões manuais ponta a ponta:
 /// `BSP_MUSEUM_DUMP_FIXTURES=/tmp/acervo cargo test --no-default-features --lib gera_mapas_de_exemplo`.
 /// Sem a variável não faz nada.
@@ -816,4 +897,5 @@ fn gera_mapas_de_exemplo_quando_pedido() {
     put("cstrike/extra.wad", &mini_wad());
     put("cstrike/sprites/glow.spr", &mini_spr());
     put("cstrike/models/p.mdl", &crate::mdl::synthetic_mdl());
+    put("cstrike/models/anim.mdl", &crate::mdl::synthetic_anim_data());
 }

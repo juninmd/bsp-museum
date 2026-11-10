@@ -15,7 +15,7 @@ struct PromptDef {
     args: &'static [(&'static str, &'static str, bool)],
 }
 
-const PROMPTS: [PromptDef; 3] = [
+const PROMPTS: [PromptDef; 4] = [
     PromptDef {
         name: "audit_map_pack",
         title: "Revisar pacote de mapas",
@@ -35,6 +35,12 @@ const PROMPTS: [PromptDef; 3] = [
         name: "explain_map",
         title: "Explicar um mapa",
         description: "Explica um mapa: modo de jogo, layout, objetivos, entidades relevantes, problemas e recursos.",
+        args: &[("path", "Caminho do .bsp (dentro de uma raiz permitida).", true)],
+    },
+    PromptDef {
+        name: "tour_map",
+        title: "Passeio visual pelo mapa",
+        description: "Olha o mapa de verdade: renders 3D (visão geral, planta, spawns, objetivos), radar e texturas, e descreve o que viu.",
         args: &[("path", "Caminho do .bsp (dentro de uma raiz permitida).", true)],
     },
 ];
@@ -110,6 +116,17 @@ Entregue um relatório em Markdown com: (a) veredito geral; (b) problemas críti
 Entregue: (a) a lista de arquivos a publicar, com caminhos relativos ao mod e tamanhos; (b) o total e quanto cada mapa custa a um jogador novo; (c) recursos referenciados e ausentes que precisam ser adicionados ou removidos do mapa; (d) o que dá para cortar (WAD com texturas não usadas, duplicados); (e) passos de publicação (servir os arquivos por HTTP e apontar `sv_downloadurl`, com `sv_allowdownload` ligado; os arquivos podem ser servidos também compactados em .bz2). Não afirme tamanhos que as ferramentas não mediram.\n\n{SAFETY}"
             )
         }
+        "tour_map" => {
+            let path = arg(args, "path").unwrap_or_default();
+            format!(
+                "Faça um passeio visual pelo mapa `{path}` usando o servidor MCP bsp-museum (somente leitura) e descreva o que você VIU.\n\n\
+1. `map_view` com preset=`overview` (visão isométrica com o teto cortado) e depois `top` (planta): entenda o formato, as salas e os corredores.\n\
+2. `map_view` com preset=`spawn_ct` e `spawn_t`: o que cada time vê ao nascer.\n\
+3. `map_entities` (func_bomb_target, hostage_entity, func_buyzone…) para achar os objetivos e, com preset=`free` (x, y, z, yaw, pitch), olhe cada um de perto.\n\
+4. `map_radar` para comparar com o radar; `map_textures` e, para um WAD, `wad_sheet` para ver o estilo visual.\n\n\
+Entregue: o que o mapa parece (estilo, escala, rotas), pontos de atenção (áreas vazias, texturas cinza = WAD ausente, spawns amontoados) e o que cada imagem mostrou. Separe o que viu do que inferiu.\n\n{SAFETY}"
+            )
+        }
         _ => {
             let path = arg(args, "path").unwrap_or_default();
             format!(
@@ -130,10 +147,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lista_tem_os_tres_prompts() {
+    fn lista_tem_os_quatro_prompts() {
         let v = list();
         let names: Vec<&str> = v["prompts"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["audit_map_pack", "fastdl_plan", "explain_map"]);
+        assert_eq!(names, ["audit_map_pack", "fastdl_plan", "explain_map", "tour_map"]);
     }
 
     #[test]
