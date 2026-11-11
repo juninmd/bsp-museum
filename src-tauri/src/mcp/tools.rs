@@ -170,6 +170,7 @@ pub fn registry(cfg: &Config) -> Vec<Tool> {
     v.extend(super::tools_map::tools(cfg));
     v.extend(super::tools_files::tools(cfg));
     v.extend(super::tools_view::tools(cfg));
+    v.extend(super::tools_more::tools(cfg));
     v
 }
 
@@ -222,7 +223,7 @@ mod tests {
             "list_maps", "map_summary", "map_diagnostics", "map_entities", "map_resources", "map_textures", "map_scene",
             "map_volumes", "map_hulls_info", "audit_folder", "compare_maps", "map_radar", "wad_list", "wad_texture",
             "wad_usage", "sprite_info", "model_info", "mod_files", "mod_file_analyze", "audio_info", "nav_info",
-            "demo_info", "server_checklist", "map_view", "model_view", "model_texture", "image_view", "wad_sheet",
+            "demo_info", "server_checklist", "map_view", "model_view", "model_texture", "image_view", "wad_sheet", "map_texture_sheet", "map_skybox", "map_lightmap", "map_nearby", "texture_usage", "model_turnaround", "model_filmstrip", "sprite_sheet", "audio_waveform",
         ] {
             assert!(have.contains(&want), "falta a ferramenta {want}");
         }

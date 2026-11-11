@@ -128,6 +128,15 @@ relativos a uma raiz permitida.
 | `model_texture(path, index?, skin?)` | **imagem**: textura/skin do modelo |
 | `image_view(path)` | **imagem**: `.tga`/`.bmp`/`.lmp` decodificado (céu, spray, HUD) |
 | `wad_sheet(path, query?, offset?, limit?, cell?, columns?)` | **imagem**: folha de contato das texturas do WAD, com `cells` (nome por célula) |
+| `map_texture_sheet(path, query?, offset?, limit?, cell?, columns?)` | **imagem**: folha com as texturas que o mapa usa (embutidas e de WAD); `drawn: false` = textura ausente no disco |
+| `map_skybox(path, cell?)` | **imagem**: planificação em cruz dos 6 lados do céu (`skyname`), com quantos lados foram achados |
+| `map_lightmap(path)` | **imagem**: atlas de lightmaps, com faces iluminadas e camadas de estilo animado |
+| `map_nearby(path, x, y, z, radius?, classname?, limit?)` | entidades dentro de um raio, da mais perto para a mais longe |
+| `texture_usage(maps_dir, texture, exact?, limit?)` | quais mapas de uma pasta usam a textura (só lê o índice de nomes) |
+| `model_turnaround(path, skin?, body?, sequence?, frame?, size?)` | **imagem**: o modelo em 4 ângulos na mesma escala |
+| `model_filmstrip(path, sequence?, frames?, skin?, yaw?, size?, columns?)` | **imagem**: quadros igualmente espaçados de uma sequência |
+| `sprite_sheet(path, cell?, columns?)` | **imagem**: todos os quadros do `.spr`, com tamanho, origem e duração |
+| `audio_waveform(path, width?, height?)` | **imagem**: forma de onda de um WAV com a região de loop destacada |
 
 **Respostas grandes.** O teto padrão é 48 000 bytes de JSON por chamada (`--max-output`). Listas têm
 `offset`/`limit` e devolvem `total`, `returned`, `next_offset` e `truncated`. Se mesmo assim a resposta

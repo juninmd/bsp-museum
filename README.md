@@ -74,7 +74,7 @@ Nenhuma variável guarda segredo. `.env*` está no `.gitignore`.
 
 - **Claude Code enxerga o acervo.** Novas ferramentas MCP devolvem imagens: `map_view` (render 3D texturizado com
   lightmap: visão geral, planta, olhos de um spawn ou câmera livre), `model_view`/`model_texture`, `image_view`
-  (TGA/BMP/LMP) e `wad_sheet` (folha de texturas), mais o prompt `tour_map`. Total: 29 ferramentas. Ver
+  (TGA/BMP/LMP) e `wad_sheet` (folha de texturas), mais o prompt `tour_map`. Total: 38 ferramentas (mais `map_texture_sheet`, `map_skybox`, `map_lightmap`, `map_nearby`, `texture_usage`, `model_turnaround`, `model_filmstrip`, `sprite_sheet` e `audio_waveform`). Ver
   [`docs/MCP.md`](docs/MCP.md).
 - **WAD**: fontes do console (lump `0x46`) agora são decodificadas.
 - **UI**: paleta de comandos (**Ctrl/⌘+K** ou `/`) com busca aproximada em mapas e comandos, atalhos (`F` filtra,

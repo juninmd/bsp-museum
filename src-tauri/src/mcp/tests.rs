@@ -877,6 +877,81 @@ fn wad_sheet_e_image_view() {
     assert_eq!(text_json(&r)["width"], 2);
 }
 
+#[test]
+fn ferramentas_de_mapa_novas() {
+    let t = mod_with_maps();
+    let mut h = H::new(&t.0);
+    let map = p(&t, "cstrike/maps/de_museu.bsp");
+
+    let r = h.call("map_texture_sheet", json!({"path": map, "cell": 48, "columns": 4}));
+    assert_eq!(r["isError"], json!(false), "{r}");
+    let (w, hh, rgba) = image_of(&r, 1);
+    assert_eq!(rgba.len(), w * hh * 4);
+    let m = text_json(&r);
+    assert!(m["cells"].as_array().unwrap().iter().any(|c| c["drawn"] == json!(true)), "{m}");
+    assert!(h.fail("map_texture_sheet", json!({"path": map, "query": "zzzz-nada"})).contains("nenhuma"));
+
+    let r = h.call("map_lightmap", json!({"path": map}));
+    assert_eq!(r["isError"], json!(false), "{r}");
+    let m = text_json(&r);
+    assert!(m["faces_with_light"].as_u64().unwrap() > 0);
+    image_of(&r, 1);
+
+    // sem céu no disco: avisa em vez de falhar
+    let r = h.call("map_skybox", json!({"path": map}));
+    assert_eq!(r["isError"], json!(false), "{r}");
+    assert_eq!(text_json(&r)["found"], 0);
+
+    // ponto no spawn CT (-420,-230): as entidades perto vêm da mais próxima para a mais longe
+    let m = h.ok("map_nearby", json!({"path": map, "x": -420, "y": -230, "z": 36, "radius": 80, "limit": 5}));
+    let d: Vec<f64> = m["entities"].as_array().unwrap().iter().map(|e| e["distance"].as_f64().unwrap()).collect();
+    assert!(!d.is_empty() && d.windows(2).all(|w| w[0] <= w[1]), "{m}");
+    let none = h.ok("map_nearby", json!({"path": map, "x": 99999, "y": 99999, "z": 0, "radius": 10}));
+    assert_eq!(none["entities"].as_array().unwrap().len(), 0);
+    assert!(h.rpc_error("tools/call", json!({"name": "map_nearby", "arguments": {"path": map, "x": 1}}))["code"] == -32602);
+
+    let dir = p(&t, "cstrike/maps");
+    let u = h.ok("texture_usage", json!({"maps_dir": dir, "texture": "a", "exact": false}));
+    assert!(u["maps_scanned"].as_u64().unwrap() >= 1);
+    let none = h.ok("texture_usage", json!({"maps_dir": dir, "texture": "textura-que-nao-existe", "exact": true}));
+    assert_eq!(none["maps"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn ferramentas_de_modelo_sprite_e_audio_novas() {
+    let t = Tmp::new();
+    t.put("cstrike/models/p.mdl", &crate::mdl::synthetic_anim_data());
+    t.put("cstrike/sprites/glow.spr", &mini_spr());
+    let wav: Vec<i16> = (0..4000).map(|i| ((i as f32 * 0.05).sin() * 12000.0 * (1.0 - i as f32 / 4000.0)) as i16).collect();
+    t.put("cstrike/sound/a.wav", &crate::audio::testutil::wav16(1, 22050, &wav, &[]));
+    let mut h = H::new(&t.0);
+
+    let r = h.call("model_turnaround", json!({"path": p(&t, "cstrike/models/p.mdl"), "size": 96}));
+    assert_eq!(r["isError"], json!(false), "{r}");
+    let (w, hh, _) = image_of(&r, 1);
+    assert_eq!((w, hh), (192, 192));
+    assert_eq!(text_json(&r)["views"].as_array().unwrap().len(), 4);
+
+    let r = h.call("model_filmstrip", json!({"path": p(&t, "cstrike/models/p.mdl"), "sequence": 0, "frames": 4, "size": 80, "columns": 2}));
+    assert_eq!(r["isError"], json!(false), "{r}");
+    let (w, hh, _) = image_of(&r, 1);
+    assert_eq!((w, hh), (160, 160));
+    assert_eq!(text_json(&r)["frames_shown"].as_array().unwrap().len(), 4);
+    assert!(h.fail("model_filmstrip", json!({"path": p(&t, "cstrike/models/p.mdl"), "sequence": 99})).len() > 3);
+
+    let r = h.call("sprite_sheet", json!({"path": p(&t, "cstrike/sprites/glow.spr"), "cell": 32, "columns": 2}));
+    assert_eq!(r["isError"], json!(false), "{r}");
+    image_of(&r, 1);
+    assert_eq!(text_json(&r)["cells"][0]["frame"], 0);
+
+    let r = h.call("audio_waveform", json!({"path": p(&t, "cstrike/sound/a.wav"), "width": 300, "height": 80}));
+    assert_eq!(r["isError"], json!(false), "{r}");
+    let (w, hh, rgba) = image_of(&r, 1);
+    assert_eq!((w, hh), (300, 80));
+    assert!(painted(&rgba, [10, 14, 22]) > 100, "onda não foi desenhada");
+    assert_eq!(text_json(&r)["sample_rate"], 22050);
+}
+
 /// Gera os mapas sintéticos numa pasta, para sessões manuais ponta a ponta:
 /// `BSP_MUSEUM_DUMP_FIXTURES=/tmp/acervo cargo test --no-default-features --lib gera_mapas_de_exemplo`.
 /// Sem a variável não faz nada.
