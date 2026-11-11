@@ -50,6 +50,27 @@ const LABEL: Record<SkinsTabId, string> = {
   files: "exp.tab.files",
 };
 
+/** ícone de cada subaba (traços de 24x24) */
+const ICON: Record<SkinsTabId, string> = {
+  p: "M12 3l8 4.5v9L12 21l-8-4.5v-9z",
+  v: "M12 3l8 4.5v9L12 21l-8-4.5v-9z",
+  w: "M12 3l8 4.5v9L12 21l-8-4.5v-9z",
+  tr: "M12 3l8 4.5v9L12 21l-8-4.5v-9z",
+  ct: "M12 3l8 4.5v9L12 21l-8-4.5v-9z",
+  zombie: "M12 3l8 4.5v9L12 21l-8-4.5v-9z",
+  models: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+  wad: "M4 4h16v16H4zM4 12h16M12 4v16",
+  images: "M4 5h16v14H4zM20 16l-5-5-8 8",
+  sprites: "M12 3l2.5 6 6.5.5-5 4.3 1.6 6.4L12 17l-5.6 3.2L8 13.8 3 9.5 9.5 9z",
+  audio: "M4 10v4M8 6v12M12 3v18M16 8v8M20 11v2",
+  maps: "M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2zM9 4v14M15 6v14",
+  data: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6",
+  files: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+};
+
+/** grupos da navegação lateral: o rótulo aparece antes da primeira aba do grupo */
+const GROUP_BEFORE: Partial<Record<SkinsTabId, string>> = { p: "skins.group.models", wad: "skins.group.media", maps: "skins.group.data" };
+
 /** subabas de modelo contam itens: o contador fica ao lado do rótulo */
 function isModelTab(id: SkinsTabId): id is ModelScope | "models" {
   return id === "models" || (MODEL_SCOPES as readonly string[]).includes(id);
@@ -73,7 +94,7 @@ export function initSkins(section: HTMLElement, hooks: SkinsHooks): SkinsControl
       <nav class="seg exp-tabs skins-tabs" role="tablist" aria-label="${esc(t("skins.tabsAria"))}">
         ${TABS.map(
           (id) =>
-            `<button type="button" role="tab" id="skins-tab-${id}" data-tab="${id}" aria-controls="skins-pane">${esc(t(LABEL[id]))}${
+            `${GROUP_BEFORE[id] ? `<div class="tabs-group" role="presentation">${esc(t(GROUP_BEFORE[id]!))}</div>` : ""}<button type="button" role="tab" id="skins-tab-${id}" data-tab="${id}" aria-controls="skins-pane"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICON[id]}"/></svg><span class="tab-label">${esc(t(LABEL[id]))}</span>${
               isModelTab(id) || LIST_TAB[id] ? '<span class="tab-count dim" aria-hidden="true"></span>' : ""
             }</button>`,
         ).join("")}
@@ -187,8 +208,11 @@ export function initSkins(section: HTMLElement, hooks: SkinsHooks): SkinsControl
 
   section.addEventListener("keydown", (e) => {
     const target = e.target as HTMLElement;
-    if (!target.matches?.("[data-tab]") || (e.key !== "ArrowRight" && e.key !== "ArrowLeft")) return;
-    const next = TABS[(TABS.indexOf(active) + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length]!;
+    const forward = e.key === "ArrowRight" || e.key === "ArrowDown";
+    const backward = e.key === "ArrowLeft" || e.key === "ArrowUp";
+    if (!target.matches?.("[data-tab]") || (!forward && !backward)) return;
+    e.preventDefault();
+    const next = TABS[(TABS.indexOf(active) + (forward ? 1 : TABS.length - 1)) % TABS.length]!;
     select(next);
     section.querySelector<HTMLButtonElement>(`#skins-tab-${next}`)?.focus();
   });

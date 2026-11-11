@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import "./style-explorer.css";
+import "./style-observatory.css";
 import { applyStatic, detectLang, getLang, modeLabel, ruleLabel, setLang, t } from "./i18n.ts";
 import {
   allRules,
@@ -48,6 +49,9 @@ const closeDrawerBtn = document.querySelector<HTMLButtonElement>("#close-drawer"
 const navMaps = document.querySelector<HTMLButtonElement>("#nav-maps")!;
 const navSkins = document.querySelector<HTMLButtonElement>("#nav-skins")!;
 const mapControls = document.querySelector<HTMLElement>("#map-controls")!;
+const hero = document.querySelector<HTMLElement>("#hero")!;
+const heroStats = document.querySelector<HTMLElement>("#hero-stats")!;
+const modeChips = document.querySelector<HTMLElement>("#mode-chips")!;
 const skinsSection = document.querySelector<HTMLElement>("#skins")!;
 
 /** elemento a devolver o foco quando o drawer fechar (o card que foi clicado/ativado) */
@@ -140,8 +144,54 @@ function toggleCompare(map: MapSummary, on: boolean) {
   }
 }
 
+/** estatísticas do topo: total, críticos, avisos e o anel de "sem avisos" */
+function renderHero() {
+  const total = maps.length;
+  let crit = 0;
+  let warn = 0;
+  for (const m of maps) {
+    const flags = flagsOf(m, settings.slots);
+    if (flags.some((f) => f.severity === "critical")) crit++;
+    else if (flags.length) warn++;
+  }
+  const clean = total - crit - warn;
+  const pct = total ? Math.round((clean / total) * 100) : 0;
+  const off = 189 * (1 - pct / 100);
+  heroStats.innerHTML = total
+    ? `<div class="stat"><strong>${total}</strong><span>${escapeHtml(t("hero.maps"))}</span></div>
+       <div class="stat crit"><strong>${crit}</strong><span>${escapeHtml(t("hero.critical"))}</span></div>
+       <div class="stat warn"><strong>${warn}</strong><span>${escapeHtml(t("hero.warn"))}</span></div>
+       <div class="ringcard">
+         <svg class="ring" viewBox="0 0 70 70" aria-hidden="true"><defs><linearGradient id="obs-ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#38d9c3"/><stop offset="1" stop-color="#f6b93b"/></linearGradient></defs><circle class="bg" cx="35" cy="35" r="30"/><circle class="fg" cx="35" cy="35" r="30" style="--ring-off:${off.toFixed(1)}"/></svg>
+         <div><strong>${pct}%</strong><span>${escapeHtml(t("hero.healthy"))}</span></div>
+       </div>`
+    : "";
+}
+
+/** chips de modo de jogo: espelho do select `#mode-filter` (que segue sendo a fonte da verdade) */
+function renderModeChips() {
+  const counts = new Map<string, number>();
+  for (const m of maps) counts.set(m.mode, (counts.get(m.mode) ?? 0) + 1);
+  const opts = Array.from(modeFilter.options).filter((o) => o.value);
+  const make = (value: string, label: string, n: number) =>
+    `<button type="button" class="mchip" data-mode="${escapeHtml(value)}" aria-pressed="${modeFilter.value === value}">${escapeHtml(label)} <b>${n}</b></button>`;
+  modeChips.innerHTML = maps.length
+    ? make("", t("filter.mode.all"), maps.length) + opts.map((o) => make(o.value, o.textContent ?? o.value, counts.get(o.value) ?? 0)).join("")
+    : "";
+  modeChips.hidden = !maps.length || mapControls.hidden;
+}
+
+modeChips.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".mchip");
+  if (!btn) return;
+  modeFilter.value = btn.dataset.mode ?? "";
+  modeFilter.dispatchEvent(new Event("change"));
+});
+
 function render() {
   const list = visibleMaps();
+  renderHero();
+  renderModeChips();
   gallery.replaceChildren();
 
   if (!maps.length) {
@@ -157,7 +207,8 @@ function render() {
     const flags = flagsOf(map, settings.slots);
     const note = annotationOf(map);
     const card = document.createElement("article");
-    card.className = "card";
+    card.className = list.length >= 5 && !gallery.children.length ? "card feat" : "card";
+    card.style.setProperty("--i", String(Math.min(gallery.children.length, 14)));
     card.dataset.path = map.path;
     if (flags.length) card.dataset.problem = flags.some((f) => f.severity === "critical") ? "critical" : "warn";
 
@@ -331,6 +382,8 @@ function switchView(view: "maps" | "skins") {
     btn.setAttribute("aria-pressed", String(on));
   }
   mapControls.hidden = !showMaps;
+  hero.hidden = !showMaps;
+  modeChips.hidden = !showMaps || !maps.length;
   gallery.hidden = !showMaps;
   statusBar.hidden = !showMaps;
   skinsSection.hidden = !showSkins;

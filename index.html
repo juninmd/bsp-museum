@@ -7,22 +7,47 @@
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
+    <div class="shell">
+    <aside class="rail" aria-label="navegação" data-i18n-aria="rail.aria">
+      <div class="mark" aria-hidden="true"></div>
+      <nav class="nav-view" role="tablist" aria-label="seção" data-i18n-aria="nav.aria">
+        <button id="nav-maps" class="rail-btn active" aria-pressed="true" data-i18n-aria="nav.maps" aria-label="Mapas">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/></svg>
+          <span class="tip" data-i18n="nav.maps">Mapas</span>
+        </button>
+        <button id="nav-skins" class="rail-btn" aria-pressed="false" data-i18n-aria="nav.skins" aria-label="Skins">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg>
+          <span class="tip" data-i18n="nav.skins">Skins</span>
+        </button>
+      </nav>
+      <div class="grow"></div>
+      <div class="tools">
+        <button id="update-toggle" class="ghost2" data-i18n-title="tools.update" title="verificar atualizações" aria-label="verificar atualizações">↻</button>
+        <button id="lang-toggle" class="ghost2" data-i18n-title="tools.lang" title="idioma">PT</button>
+        <button id="theme-toggle" class="ghost2" data-i18n-title="tools.theme" title="tema" aria-label="tema">◐</button>
+      </div>
+    </aside>
+    <div class="content">
     <header class="topbar">
       <div class="brand">
         <span class="mark"></span>
         <h1>bsp-museum</h1>
       </div>
-      <nav class="seg nav-view" role="tablist" aria-label="seção" data-i18n-aria="nav.aria">
-        <button id="nav-maps" class="active" aria-pressed="true" data-i18n="nav.maps">Mapas</button>
-        <button id="nav-skins" aria-pressed="false" data-i18n="nav.skins">Skins</button>
-      </nav>
-      <div class="tools">
-        <button id="palette-btn" class="ghost2 palette-btn" data-i18n-title="pal.open" data-i18n-aria="pal.open" title="Paleta de comandos (Ctrl+K)" aria-label="Paleta de comandos"><span aria-hidden="true">⌕</span><kbd>Ctrl K</kbd></button>
-        <button id="lang-toggle" class="ghost2" data-i18n-title="tools.lang" title="idioma">PT</button>
-        <button id="update-toggle" class="ghost2" data-i18n-title="tools.update" title="verificar atualizações" aria-label="verificar atualizações">↻</button>
-        <button id="theme-toggle" class="ghost2" data-i18n-title="tools.theme" title="tema" aria-label="tema">◐</button>
-      </div>
+      <button id="palette-btn" class="cmd-pill palette-btn" data-i18n-title="pal.open" data-i18n-aria="pal.open" title="Paleta de comandos (Ctrl+K)" aria-label="Paleta de comandos">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <span class="grow" data-i18n="pal.cta">Buscar mapas, comandos, texturas…</span>
+        <kbd>Ctrl K</kbd>
+      </button>
     </header>
+
+    <section id="hero" class="hero" aria-label="visão geral" data-i18n-aria="hero.aria">
+      <div class="hero-text">
+        <div class="eyebrow" data-i18n="hero.eyebrow">Observatório de mapas</div>
+        <h2 class="hero-title" data-i18n="hero.title">Seu acervo, ao vivo.</h2>
+        <p class="hero-sub" data-i18n="hero.sub">Cada mapa desenhado a partir do próprio .bsp.</p>
+      </div>
+      <div class="hero-stats" id="hero-stats" aria-live="polite"></div>
+    </section>
 
     <div class="filterbar" id="map-controls">
       <label class="sr-only" for="search" data-i18n="filter.search.label">filtrar mapas</label>
@@ -73,9 +98,13 @@
 
     <div id="status" class="status" role="status"></div>
 
+    <div id="mode-chips" class="mode-chips" role="group" aria-label="modo de jogo" data-i18n-aria="filter.mode"></div>
+
     <main id="gallery" class="gallery" aria-live="polite"></main>
 
     <section id="skins" class="explorer" hidden aria-label="Skins" data-i18n-aria="skins.aria"></section>
+    </div>
+    </div>
 
     <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-label="detalhes do mapa" data-i18n-aria="detail.aria" hidden>
       <button id="close-drawer" class="close" aria-label="fechar" data-i18n-aria="common.close">×</button>

@@ -53,6 +53,8 @@ try {
     await page.screenshot({ path: join(out, name + ".png") });
     await ctx.close();
   };
+  await shot("v11-galeria-observatorio", "dark", "pt", async (p) => { await p.waitForTimeout(1600); });
+  await shot("v11-galeria-claro-en", "light", "en", async (p) => { await p.waitForTimeout(1600); });
   await shot("v9-paleta-comandos", "dark", "pt", async (p) => {
     await p.keyboard.press("Control+k");
     await p.waitForSelector(".palette-item");
