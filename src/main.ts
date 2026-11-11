@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import "./style-explorer.css";
 import "./style-observatory.css";
+import "./style-observatory-views.css";
 import { applyStatic, detectLang, getLang, modeLabel, ruleLabel, setLang, t } from "./i18n.ts";
 import {
   allRules,
@@ -23,6 +24,7 @@ import { detailHtml, disposeDetail, wireDetail } from "./ui/detail.ts";
 import { escapeHtml, trapTab } from "./ui/dom.ts";
 import { initModal, isModalOpen, openModal } from "./ui/modal.ts";
 import { initPalette, type PaletteCommand } from "./ui/palette.ts";
+import { initClaudeLink } from "./ui/claude-link.ts";
 import { initSkins } from "./ui/skins/index.ts";
 
 const gallery = document.querySelector<HTMLElement>("#gallery")!;
@@ -53,6 +55,8 @@ const hero = document.querySelector<HTMLElement>("#hero")!;
 const heroStats = document.querySelector<HTMLElement>("#hero-stats")!;
 const modeChips = document.querySelector<HTMLElement>("#mode-chips")!;
 const skinsSection = document.querySelector<HTMLElement>("#skins")!;
+const claudeSection = document.querySelector<HTMLElement>("#claude")!;
+const navClaude = document.querySelector<HTMLButtonElement>("#nav-claude")!;
 
 /** elemento a devolver o foco quando o drawer fechar (o card que foi clicado/ativado) */
 let lastFocused: HTMLElement | null = null;
@@ -93,6 +97,7 @@ function refreshLanguage() {
   updateCompareButton();
   if (current && !drawer.hidden) renderCurrentDetail();
   skins.refreshLanguage();
+  claude.refreshLanguage();
 }
 
 // ------------------------------------------------------------------ galeria
@@ -371,12 +376,14 @@ function fillTagFilter() {
 
 // -------------------------------------------------------------- seções (features)
 
-function switchView(view: "maps" | "skins") {
+function switchView(view: "maps" | "skins" | "claude") {
   const showMaps = view === "maps";
   const showSkins = view === "skins";
+  const showClaude = view === "claude";
   for (const [btn, on] of [
     [navMaps, showMaps],
     [navSkins, showSkins],
+    [navClaude, showClaude],
   ] as const) {
     btn.classList.toggle("active", on);
     btn.setAttribute("aria-pressed", String(on));
@@ -387,16 +394,22 @@ function switchView(view: "maps" | "skins") {
   gallery.hidden = !showMaps;
   statusBar.hidden = !showMaps;
   skinsSection.hidden = !showSkins;
+  claudeSection.hidden = !showClaude;
   if (showSkins) skins.show();
   else skins.hide();
+  if (showClaude) claude.show();
+  else claude.hide();
 }
 
 const skins = initSkins(skinsSection, {
   getLastDir: () => settings.last_dir,
 });
 
+const claude = initClaudeLink(claudeSection, { getLastDir: () => settings.last_dir });
+
 navMaps.addEventListener("click", () => switchView("maps"));
 navSkins.addEventListener("click", () => switchView("skins"));
+navClaude.addEventListener("click", () => switchView("claude"));
 
 // ------------------------------------------------------------------------------------
 
@@ -543,6 +556,7 @@ function paletteSource(): PaletteCommand[] {
   const cmds: PaletteCommand[] = [
     act("go-maps", t("pal.go.maps"), () => switchView("maps")),
     act("go-skins", t("pal.go.skins"), () => switchView("skins"), "mdl wad spr sprite sound audio modelo skin textura"),
+    act("go-claude", t("pal.go.claude"), () => switchView("claude"), t("pal.go.claude.kw")),
     act("focus-search", t("pal.focusSearch"), () => {
       switchView("maps");
       search.focus();

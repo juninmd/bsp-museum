@@ -1,0 +1,16 @@
+export const DICT_SKY: Record<string, [string, string]> = {
+  "exp.sky.title": ["Céu (skybox)", "Sky (skybox)"],
+  "exp.sky.found": ["{0} de 6 lados encontrados", "{0} of 6 sides found"],
+  "exp.sky.complete": ["Céu completo: o mapa pode usá-lo com skyname “{0}”.", "Complete sky: a map can use it with skyname “{0}”."],
+  "exp.sky.incomplete": ["Faltam lados: o mapa cai no domo de reserva.", "Sides missing: the map falls back to the default dome."],
+  "exp.sky.cube": ["cubo do céu girando", "rotating sky cube"],
+  "exp.sky.net": ["planificação das 6 faces", "6-face layout"],
+  "exp.sky.missing": ["faltando", "missing"],
+  "exp.sky.face.up": ["topo", "top"],
+  "exp.sky.face.dn": ["base", "bottom"],
+  "exp.sky.face.lf": ["esquerda", "left"],
+  "exp.sky.face.rt": ["direita", "right"],
+  "exp.sky.face.ft": ["frente", "front"],
+  "exp.sky.face.bk": ["trás", "back"],
+  "exp.sky.loading": ["lendo os 6 lados…", "reading the 6 sides…"],
+};

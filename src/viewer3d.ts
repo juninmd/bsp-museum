@@ -10,6 +10,7 @@ import {
   STYLE_SLOTS,
   TEXTURE_FRAME_INTERVAL,
 } from "./lib/anim.ts";
+import { cameraToMap, type MapCamera } from "./lib/camera.ts";
 import { buildChunks, toWorld, visibleIndices, type Chunk } from "./lib/geometry.ts";
 import { inputFromMesh } from "./lib/chunker.ts";
 import { Pvs } from "./lib/pvs.ts";
@@ -38,6 +39,8 @@ export interface ViewerStats {
   /** folha do BSP em que a câmera está (-1 = sem árvore) */
   leaf: number;
   pvsActive: boolean;
+  /** câmera nas coordenadas do mapa (x y z e yaw em graus) */
+  cam: MapCamera;
 }
 
 /** Camadas que o painel "Camadas" liga e desliga. */
@@ -1038,7 +1041,14 @@ export function mount3D(
     const now = performance.now();
     if (statsListener && now - lastStats > 400) {
       lastStats = now;
-      statsListener({ drawn: countDrawn(), total: totalTriangles, leaf: currentLeaf, pvsActive });
+      camera.getWorldDirection(listenFwd);
+      statsListener({
+        drawn: countDrawn(),
+        total: totalTriangles,
+        leaf: currentLeaf,
+        pvsActive,
+        cam: cameraToMap([camera.position.x, camera.position.y, camera.position.z], [listenFwd.x, listenFwd.y, listenFwd.z]),
+      });
     }
   };
   refreshMaterials();
