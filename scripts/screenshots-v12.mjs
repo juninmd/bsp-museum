@@ -8,6 +8,7 @@
 import { spawn } from "node:child_process";
 import { readFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const fixtures = resolve(process.argv[2] ?? "");
 const out = resolve(process.argv[3] ?? "prints");
@@ -35,7 +36,7 @@ for (let i = 0; i < 80; i++) {
   try {
     if ((await fetch(base)).ok) break;
   } catch {}
-  await new Promise((r) => setTimeout(r, 250));
+  await sleep(250);
 }
 
 const mock = `(() => {
