@@ -14,6 +14,7 @@ import {
   hexDump,
   matchesQuery,
 } from "../../lib/explorer.ts";
+import { isSkyEnvPath, parseSkyPath } from "../../lib/sky.ts";
 import type { ImageInfo, SpriteInfo } from "../../types/formats.ts";
 import {
   NAV_CROUCH,
@@ -45,6 +46,7 @@ import {
   sizeText,
   warningsHtml,
 } from "./common.ts";
+import { mountSkyBlock } from "./sky.ts";
 import { mountSpritePlayer } from "./sprite-player.ts";
 import { absPath, entries as allEntries, errMsg, fileArgs } from "./state.ts";
 import { createVirtualList } from "./virtual-list.ts";
@@ -130,7 +132,7 @@ export function mountFileViewer(host: HTMLElement, entry: ModFileEntry, deps: Vi
   const absolute = absPath(entry);
   switch (kind) {
     case "image":
-      void showImage(body, entry, absolute, alive);
+      void showImage(body, entry, absolute, alive, swap);
       break;
     case "sprite":
       if (absolute) void showSprite(body, entry, absolute, alive, swap);
@@ -167,7 +169,13 @@ export function mountFileViewer(host: HTMLElement, entry: ModFileEntry, deps: Vi
 
 // ------------------------------------------------------------------ imagem
 
-async function showImage(body: HTMLElement, entry: ModFileEntry, absolute: string | null, alive: () => boolean) {
+async function showImage(
+  body: HTMLElement,
+  entry: ModFileEntry,
+  absolute: string | null,
+  alive: () => boolean,
+  swap: (fn: () => void) => void,
+) {
   body.innerHTML = loadingHtml();
   const ext = extOf(entry.name);
   try {
@@ -209,7 +217,11 @@ async function showImage(body: HTMLElement, entry: ModFileEntry, absolute: strin
       </div>
       ${warn}
       <div class="img-stage checker"><img class="img-el fit" alt="${esc(entry.name)}" src="${src}" /></div>
-      ${factsHtml(facts)}`;
+      ${factsHtml(facts)}
+      <div class="sky-host"></div>`;
+    // lado de um céu em gfx/env: mostra o cubo com os 6 lados (os irmãos são lidos da mesma pasta)
+    const sky = absolute && entry.layer !== "pak" && isSkyEnvPath(entry.path) ? parseSkyPath(absolute) : null;
+    if (sky) swap(mountSkyBlock(body.querySelector<HTMLElement>(".sky-host")!, sky));
     const img = body.querySelector<HTMLImageElement>(".img-el")!;
     body.querySelector<HTMLSelectElement>(".img-zoom")!.addEventListener("change", (e) => {
       const v = (e.target as HTMLSelectElement).value;

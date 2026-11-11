@@ -474,7 +474,7 @@ impl Default for UsageLimits {
 /// Nomes (minúsculos, sem repetição) do lump de texturas de um BSP, lendo só a tabela de
 /// offsets e 16 bytes por textura — o mesmo cuidado da varredura do catálogo, que não lê o mapa
 /// inteiro. `None` = arquivo ilegível ou lump torto.
-fn bsp_texture_names(path: &Path) -> Option<Vec<String>> {
+pub(crate) fn bsp_texture_names(path: &Path) -> Option<Vec<String>> {
     let mut file = File::open(path).ok()?;
     let file_len = file.metadata().ok()?.len();
     let mut header = [0u8; 4 + LUMP_COUNT * 8];

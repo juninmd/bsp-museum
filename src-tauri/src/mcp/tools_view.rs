@@ -106,11 +106,11 @@ pub(super) fn tools(_cfg: &Config) -> Vec<Tool> {
     ]
 }
 
-fn png_bytes(w: usize, h: usize, rgba: &[u8]) -> Result<Vec<u8>, ToolError> {
+pub(super) fn png_bytes(w: usize, h: usize, rgba: &[u8]) -> Result<Vec<u8>, ToolError> {
     crate::bsp::png_encode(w, h, rgba).ok_or_else(|| "falha ao codificar o PNG".into())
 }
 
-fn decode_textures(list: impl Iterator<Item = (String, Option<String>)>) -> Vec<Option<Tex>> {
+pub(super) fn decode_textures(list: impl Iterator<Item = (String, Option<String>)>) -> Vec<Option<Tex>> {
     list.map(|(name, png)| {
         png.as_deref().and_then(render3d::decode_png_url).map(|mut t| {
             t.masked = name.starts_with('{');
@@ -194,7 +194,7 @@ fn map_view(cfg: &Config, a: &Args) -> R {
 }
 
 /// Posa os vértices locais de cada bone com a pose de um quadro (`pose[bone] * local`).
-fn skin_pose(model: &catalog::MdlSummary, seq: &mdl::SeqFrames, frame: usize) -> Option<Vec<f32>> {
+pub(super) fn skin_pose(model: &catalog::MdlSummary, seq: &mdl::SeqFrames, frame: usize) -> Option<Vec<f32>> {
     let bones = seq.bones as usize;
     let frames = seq.frames as usize;
     if bones == 0 || frames == 0 || model.local_positions.len() != model.vert_bones.len() * 3 {
@@ -220,35 +220,51 @@ fn skin_pose(model: &catalog::MdlSummary, seq: &mdl::SeqFrames, frame: usize) ->
     Some(out)
 }
 
-fn model_view(cfg: &Config, a: &Args) -> R {
-    let path = file_arg(cfg, a, "path", &["mdl"], MAX_MDL_BYTES)?;
-    let opt_u8 = |k: &str| a.opt_usize(k).map(|v| v.min(255) as u8);
-    let model = catalog::load_model_ex(
-        &path,
-        a.opt_usize("body").map(|v| v as u32),
-        a.opt_usize("skin").map(|v| v as u32),
-        opt_u8("top"),
-        opt_u8("bottom"),
-    )?;
+/// Modelo carregado e posado, pronto para ser desenhado de vários ângulos.
+pub(super) struct ModelScene {
+    pub model: catalog::MdlSummary,
+    pub positions: Vec<f32>,
+    pub textures: Vec<Option<Tex>>,
+    pub mins: [f32; 3],
+    pub maxs: [f32; 3],
+    /// `(sequência, quadro, total de quadros)` quando posado
+    pub pose: Option<(usize, usize, u32)>,
+    pub note: Option<&'static str>,
+}
+
+/// Carrega o `.mdl` (body/skin/cores de time) e, com `sequence`, posa o quadro `frame`.
+pub(super) fn prepare_model(
+    path: &std::path::Path,
+    body: Option<u32>,
+    skin: Option<u32>,
+    top: Option<u8>,
+    bottom: Option<u8>,
+    sequence: Option<(usize, usize)>,
+) -> Result<ModelScene, ToolError> {
+    let model = catalog::load_model_ex(path, body, skin, top, bottom)?;
     if model.positions.is_empty() {
         return Err("o modelo não tem triângulos para desenhar".into());
     }
-    let mut note = Value::Null;
-    let posed = match a.opt_usize("sequence") {
-        Some(seq) => {
-            let frames = catalog::load_sequence(&path, seq)?;
-            let frame = a.usize_or("frame", 0);
-            match skin_pose(&model, &frames, frame) {
-                Some(p) => Some((p, seq, frame.min(frames.frames.saturating_sub(1) as usize), frames.frames)),
-                None => {
-                    note = json!("sequência sem quadros: desenhado em repouso");
-                    None
-                }
+    let mut note = None;
+    let mut pose = None;
+    let mut positions = model.positions.clone();
+    if let Some((seq, frame)) = sequence {
+        let frames = catalog::load_sequence(path, seq)?;
+        match skin_pose(&model, &frames, frame) {
+            Some(p) => {
+                pose = Some((seq, frame.min(frames.frames.saturating_sub(1) as usize), frames.frames));
+                positions = p;
             }
+            None => note = Some("sequência sem quadros: desenhado em repouso"),
         }
-        None => None,
-    };
-    let positions: &[f32] = posed.as_ref().map(|p| p.0.as_slice()).unwrap_or(&model.positions);
+    }
+    let mut textures = decode_textures(model.textures.iter().map(|t| (t.name.clone(), t.png.clone())));
+    // `masked` vem da flag da textura do .mdl, não do nome
+    for (t, info) in textures.iter_mut().zip(model.extra.texture_info.iter()) {
+        if let Some(t) = t {
+            t.masked = info.masked;
+        }
+    }
     let (mut mins, mut maxs) = ([f32::MAX; 3], [f32::MIN; 3]);
     for v in positions.chunks_exact(3) {
         for k in 0..3 {
@@ -256,43 +272,56 @@ fn model_view(cfg: &Config, a: &Args) -> R {
             maxs[k] = maxs[k].max(v[k]);
         }
     }
-    let textures = decode_textures(model.textures.iter().map(|t| (t.name.clone(), t.png.clone())));
-    // `masked` vem da flag da textura do .mdl, não do nome
-    let mut textures = textures;
-    for (t, info) in textures.iter_mut().zip(model.extra.texture_info.iter()) {
-        if let Some(t) = t {
-            t.masked = info.masked;
-        }
-    }
-    let input = MeshInput { positions, uvs: &model.uvs, texindex: &model.texindex, textures: &textures, lm_uvs: &[], lightmap: None };
-    let yaw = a.opt_f32("yaw").unwrap_or(135.0);
-    let pitch = a.opt_f32("pitch").unwrap_or(-15.0);
+    Ok(ModelScene { model, positions, textures, mins, maxs, pose, note })
+}
+
+/// Desenha a cena `side` x `side` de um ponto de vista; `mins/maxs` fixam o enquadramento.
+pub(super) fn render_model(scene: &ModelScene, yaw: f32, pitch: f32, side: usize, bounds: Option<([f32; 3], [f32; 3])>) -> Vec<u8> {
+    let (mins, maxs) = bounds.unwrap_or((scene.mins, scene.maxs));
+    let input = MeshInput {
+        positions: &scene.positions,
+        uvs: &scene.model.uvs,
+        texindex: &scene.model.texindex,
+        textures: &scene.textures,
+        lm_uvs: &[],
+        lightmap: None,
+    };
     let cam = render3d::frame_box(mins, maxs, yaw, pitch, 45.0);
-    let side = a.usize_or("size", 640).clamp(64, 1200);
     let mut opt = Options::new(side, side);
     opt.bg = [38, 42, 52];
-    let rgba = render3d::render(&input, &cam, &opt);
-    let png = png_bytes(opt.width, opt.height, &rgba)?;
+    render3d::render(&input, &cam, &opt)
+}
+
+fn model_view(cfg: &Config, a: &Args) -> R {
+    let path = file_arg(cfg, a, "path", &["mdl"], MAX_MDL_BYTES)?;
+    let opt_u8 = |k: &str| a.opt_usize(k).map(|v| v.min(255) as u8);
+    let seq = a.opt_usize("sequence").map(|s| (s, a.usize_or("frame", 0)));
+    let scene = prepare_model(&path, a.opt_usize("body").map(|v| v as u32), a.opt_usize("skin").map(|v| v as u32), opt_u8("top"), opt_u8("bottom"), seq)?;
+    let yaw = a.opt_f32("yaw").unwrap_or(135.0);
+    let pitch = a.opt_f32("pitch").unwrap_or(-15.0);
+    let side = a.usize_or("size", 640).clamp(64, 1200);
+    let rgba = render_model(&scene, yaw, pitch, side, None);
+    let png = png_bytes(side, side, &rgba)?;
     let mut v = json!({
         "model": path.file_name().map(|s| s.to_string_lossy().to_string()),
-        "triangles": positions.len() / 9,
-        "bounds": {"mins": mins, "maxs": maxs},
+        "triangles": scene.positions.len() / 9,
+        "bounds": {"mins": scene.mins, "maxs": scene.maxs},
         "camera": {"yaw": yaw, "pitch": pitch},
-        "textures": textures.len(),
-        "sequences": model.sequences.len(),
-        "skin_families": model.skin_families.len(),
+        "textures": scene.textures.len(),
+        "sequences": scene.model.sequences.len(),
+        "skin_families": scene.model.skin_families.len(),
         "pose": "rest",
     });
-    if let Some((_, seq, frame, total)) = &posed {
-        v["pose"] = json!({"sequence": seq, "name": model.sequences.get(*seq), "frame": frame, "frames": total});
+    if let Some((seq, frame, total)) = scene.pose {
+        v["pose"] = json!({"sequence": seq, "name": scene.model.sequences.get(seq), "frame": frame, "frames": total});
     }
-    if !note.is_null() {
-        v["note"] = note;
+    if let Some(n) = scene.note {
+        v["note"] = json!(n);
     }
     Ok(ToolOutput::json(v).with_image(&png))
 }
 
-fn png_bytes_of(data_url: &str) -> Option<Vec<u8>> {
+pub(super) fn png_bytes_of(data_url: &str) -> Option<Vec<u8>> {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD.decode(data_url.strip_prefix("data:image/png;base64,")?).ok()
 }
@@ -322,7 +351,7 @@ fn image_view(cfg: &Config, a: &Args) -> R {
 }
 
 /// Copia `src` (RGBA `sw`x`sh`) para dentro da célula `cell`x`cell` de `dst`, centralizada, por vizinho mais próximo.
-fn blit_fit(dst: &mut [u8], dw: usize, ox: usize, oy: usize, cell: usize, src: &Tex) {
+pub(super) fn blit_fit(dst: &mut [u8], dw: usize, ox: usize, oy: usize, cell: usize, src: &Tex) {
     let scale = (cell as f32 / src.w as f32).min(cell as f32 / src.h as f32);
     let (tw, th) = (((src.w as f32 * scale) as usize).clamp(1, cell), ((src.h as f32 * scale) as usize).clamp(1, cell));
     let (px, py) = (ox + (cell - tw) / 2, oy + (cell - th) / 2);

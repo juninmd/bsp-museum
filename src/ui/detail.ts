@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { formatCamera } from "../lib/camera.ts";
 import { buildChunksAsync } from "../lib/chunker.ts";
 import { withExtraDefaults } from "../lib/mesh-extra.ts";
 import type { Chunk } from "../lib/geometry.ts";
@@ -325,7 +326,8 @@ export function wireDetail(root: HTMLElement, d: MapDetail, map: MapSummary, ctx
     activeViewer.onStats((s) => {
       if (!hud) return;
       const leaf = s.leaf >= 0 ? ` · ${t("viewer.leaf", s.leaf)}` : "";
-      hud.textContent = `${t("viewer.tris", s.drawn.toLocaleString(t("locale")), s.total.toLocaleString(t("locale")))}${leaf}${s.pvsActive ? " · PVS" : ""}`;
+      const cam = formatCamera(s.cam);
+      hud.textContent = `${t("viewer.tris", s.drawn.toLocaleString(t("locale")), s.total.toLocaleString(t("locale")))}${leaf}${s.pvsActive ? " · PVS" : ""} · ${t("viewer.cam", cam.pos, cam.yaw)}`;
     });
   };
   for (const b of buttons) b.addEventListener("click", () => void setMode(b.dataset.view as ViewMode));

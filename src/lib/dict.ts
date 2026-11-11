@@ -3,6 +3,8 @@ import { DICT_EXPLORER } from "./dict-explorer.ts";
 import { DICT_SOUND3D } from "./dict-sound3d.ts";
 import { DICT_UPDATE } from "./dict-update.ts";
 import { DICT_PALETTE } from "./dict-palette.ts";
+import { DICT_SKY } from "./dict-sky.ts";
+import { DICT_CLAUDE } from "./dict-claude.ts";
 
 /**
  * Textos da interface: `[português, inglês]`. `{0}`, `{1}`… são argumentos de `t()`.
@@ -169,6 +171,7 @@ export const DICT: Record<string, [string, string]> = {
   "viewer.fullscreenExit": ["sair da tela cheia", "exit fullscreen"],
   "viewer.orbitHint": ["arraste para girar · scroll para zoom", "drag to rotate · scroll to zoom"],
   "viewer.fpsHint": ["WASD mover · mouse olhar · Space/Ctrl sobe/desce", "WASD move · mouse look · Space/Ctrl up/down"],
+  "viewer.cam": ["câmera {0} · yaw {1}°", "camera {0} · yaw {1}°"],
   "viewer.tris": ["{0} / {1} triângulos", "{0} / {1} triangles"],
   "viewer.leaf": ["folha {0}", "leaf {0}"],
   "legend.ct": ["spawn CT", "CT spawn"],
@@ -287,4 +290,6 @@ export const DICT: Record<string, [string, string]> = {
   // botão de atualização (verificação pelas releases do GitHub)
   ...DICT_UPDATE,
   ...DICT_PALETTE,
+  ...DICT_SKY,
+  ...DICT_CLAUDE,
 };
