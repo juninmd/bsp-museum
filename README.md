@@ -84,13 +84,22 @@ Nenhuma variável guarda segredo. `.env*` está no `.gitignore`.
 |---|---|---|
 | ![paleta](prints/v9-paleta-busca-mapa.png) | ![overview](prints/v9-mcp-map-view-overview.png) | ![spawn](prints/v9-mcp-map-view-spawn.png) |
 
+## Interface "Observatório"
+
+Visual novo, só no frontend (`src/style-observatory.css`, carregado por último): trilho lateral de navegação, topo com
+busca/paleta (**Ctrl/⌘+K**), **hero** com total de mapas, críticos, avisos e o anel de "mapas sem avisos", chips de modo
+de jogo (espelham o filtro), galeria em vidro com card em destaque, entrada escalonada, varredura ao passar o mouse e fundo
+em aurora. Respeita `prefers-reduced-motion`, tema claro/escuro e pt/en; abaixo de 980 px o trilho vira barra no topo.
+
+![galeria](prints/v11-galeria-observatorio.png)
+
 ## Abas da seção Skins
 
-A seção cobre todos os tipos de arquivo do GoldSrc, cada um com a sua aba e contador: modelos (`p_`, `v_`, `w_`,
+A navegação lateral é agrupada (Modelos, Mídia, Dados) e cobre todos os tipos de arquivo do GoldSrc, cada um com a sua aba e contador: modelos (`p_`, `v_`, `w_`,
 TRs, CTs, zumbis e todos os `.mdl`), **Texturas (WAD)**, **Imagens** (TGA/BMP/LMP: céu, sprays, HUD, overviews),
 **Sprites**, **Áudio**, **Mapas (.bsp)**, **Dados e configs** (`.nav`, `.dem`, `.txt`, `.cfg`, `liblist.gam`…) e
 **Arquivos do mod** (tudo, inclusive `.pak`). As abas novas usam o visualizador de cada formato do explorador e
-listam também o conteúdo dos `.pak`. A barra rola na horizontal e a aba ativa fica visível.
+listam também o conteúdo dos `.pak`. As setas ↑↓ trocam de aba.
 
 ![abas](prints/v10-skins-abas.png)
 
