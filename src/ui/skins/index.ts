@@ -7,7 +7,7 @@ import { modRootFromMapsDir } from "../../lib/explorer.ts";
 import { MODEL_SCOPES, type ModelScope } from "../../lib/skins-catalog.ts";
 import { esc, sizeText } from "../explorer/common.ts";
 import { mountFilesTab } from "../explorer/files.ts";
-import { mountAudioTab, mountSpritesTab } from "../explorer/media-tabs.ts";
+import { listCount, mountAudioTab, mountDataTab, mountImagesTab, mountMapsTab, mountSpritesTab, type ListKind } from "../explorer/media-tabs.ts";
 import { onChange, pickModRoot, reload, setModRoot, state } from "../explorer/state.ts";
 import { mountWadTab, requestWad } from "../explorer/wad.ts";
 import { modelTotals, mountModelCatalog } from "./model-catalog.ts";
@@ -25,9 +25,12 @@ export interface SkinsController {
   select(tab: SkinsTabId): void;
 }
 
-export type SkinsTabId = ModelScope | "models" | "wad" | "sprites" | "audio" | "files";
+export type SkinsTabId = ModelScope | "models" | "wad" | "images" | "sprites" | "audio" | "maps" | "data" | "files";
 
-const TABS: readonly SkinsTabId[] = [...MODEL_SCOPES, "models", "wad", "sprites", "audio", "files"];
+const TABS: readonly SkinsTabId[] = [...MODEL_SCOPES, "models", "wad", "images", "sprites", "audio", "maps", "data", "files"];
+
+/** subabas de lista de arquivos: qual grupo contam (o contador aparece ao lado do rótulo) */
+const LIST_TAB: Partial<Record<SkinsTabId, ListKind>> = { images: "image", sprites: "sprite", audio: "sound", maps: "map", data: "data" };
 
 /** chave i18n do rótulo de cada subaba */
 const LABEL: Record<SkinsTabId, string> = {
@@ -39,8 +42,11 @@ const LABEL: Record<SkinsTabId, string> = {
   zombie: "skins.tab.zombie",
   models: "skins.tab.models",
   wad: "exp.tab.wad",
+  images: "exp.tab.images",
   sprites: "exp.tab.sprites",
   audio: "exp.tab.audio",
+  maps: "exp.tab.maps",
+  data: "exp.tab.data",
   files: "exp.tab.files",
 };
 
@@ -68,7 +74,7 @@ export function initSkins(section: HTMLElement, hooks: SkinsHooks): SkinsControl
         ${TABS.map(
           (id) =>
             `<button type="button" role="tab" id="skins-tab-${id}" data-tab="${id}" aria-controls="skins-pane">${esc(t(LABEL[id]))}${
-              isModelTab(id) ? '<span class="tab-count dim" aria-hidden="true"></span>' : ""
+              isModelTab(id) || LIST_TAB[id] ? '<span class="tab-count dim" aria-hidden="true"></span>' : ""
             }</button>`,
         ).join("")}
       </nav>
@@ -114,7 +120,8 @@ export function initSkins(section: HTMLElement, hooks: SkinsHooks): SkinsControl
       const id = b.dataset.tab as SkinsTabId;
       const holder = b.querySelector<HTMLElement>(".tab-count");
       if (!holder) continue;
-      const n = id === "models" ? totals.all : isModelTab(id) ? totals[id] : 0;
+      const list = LIST_TAB[id];
+      const n = list ? listCount(list) : id === "models" ? totals.all : isModelTab(id) ? totals[id] : 0;
       holder.textContent = n ? n.toLocaleString(t("locale")) : "";
     }
   }
@@ -125,6 +132,7 @@ export function initSkins(section: HTMLElement, hooks: SkinsHooks): SkinsControl
       b.classList.toggle("active", on);
       b.setAttribute("aria-selected", String(on));
       b.tabIndex = on ? 0 : -1;
+      if (on) b.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     }
   }
 
@@ -143,6 +151,15 @@ export function initSkins(section: HTMLElement, hooks: SkinsHooks): SkinsControl
     switch (active) {
       case "wad":
         disposeTab = mountWadTab(pane);
+        break;
+      case "images":
+        disposeTab = mountImagesTab(pane, { gotoWad: goWad, gotoResources: () => select("models") });
+        break;
+      case "maps":
+        disposeTab = mountMapsTab(pane, { gotoWad: goWad, gotoResources: () => select("models") });
+        break;
+      case "data":
+        disposeTab = mountDataTab(pane, { gotoWad: goWad, gotoResources: () => select("models") });
         break;
       case "sprites":
         disposeTab = mountSpritesTab(pane);

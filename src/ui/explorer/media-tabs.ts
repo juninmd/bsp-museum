@@ -5,10 +5,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { t } from "../../i18n.ts";
 import { baseName, dirName, entryKey, matchesQuery } from "../../lib/explorer.ts";
 import type { SpriteInfo } from "../../types/formats.ts";
-import type { Layer, ModFileEntry } from "../../types/modfiles.ts";
+import type { FileKind, Layer, ModFileEntry } from "../../types/modfiles.ts";
 import { mountAudioPlayer } from "./audio-player.ts";
 import { emptyHtml, errorHtml, esc, kindBadge, layerChip, loadingHtml, noticeHtml, sizeText } from "./common.ts";
 import { mountSpritePlayer } from "./sprite-player.ts";
+import { mountFileViewer, type ViewerDeps } from "./viewers.ts";
 import { absPath, entries as allEntries, errMsg, state } from "./state.ts";
 import { createVirtualList } from "./virtual-list.ts";
 
@@ -23,8 +24,24 @@ interface Item {
   abs: string | null;
 }
 
+/** o que cada subaba lista: chave dos textos (`exp.<kind>.*`) e os tipos de arquivo que entram */
+export type ListKind = "sprite" | "sound" | "image" | "map" | "data";
+
+export const LIST_KINDS: Record<ListKind, readonly FileKind[]> = {
+  sprite: ["sprite"],
+  sound: ["sound"],
+  image: ["image"],
+  map: ["map"],
+  data: ["nav", "demo", "text", "cfg"],
+};
+
+/** quantos arquivos a subaba lista (o mesmo critério da lista, para o contador da aba) */
+export function listCount(kind: ListKind): number {
+  return allEntries().filter((e) => LIST_KINDS[kind].includes(e.kind) && (kind !== "sprite" || e.layer !== "pak")).length;
+}
+
 interface TabConfig {
-  kind: "sprite" | "sound";
+  kind: ListKind;
   /** itens extras (arquivos escolhidos fora do mod) */
   extras: Item[];
   browse: { label: string; extensions: string[] } | null;
@@ -52,7 +69,7 @@ function mountListTab(host: HTMLElement, cfg: TabConfig): () => void {
   }
   const base = (): Item[] => {
     const fromMod = allEntries()
-      .filter((e) => (e.kind === cfg.kind || (cfg.kind === "sound" && e.kind === "sound")) && (cfg.kind !== "sprite" || e.layer !== "pak"))
+      .filter((e) => LIST_KINDS[cfg.kind].includes(e.kind) && (cfg.kind !== "sprite" || e.layer !== "pak"))
       .map(toItem);
     return [...cfg.extras, ...fromMod];
   };
@@ -68,7 +85,7 @@ function mountListTab(host: HTMLElement, cfg: TabConfig): () => void {
             <option value="">${esc(t("exp.files.allLayers"))}</option>
             <option value="mod">${esc(t("exp.layer.mod"))}</option>
             <option value="valve">${esc(t("exp.layer.valve"))}</option>
-            ${cfg.kind === "sound" ? `<option value="pak">${esc(t("exp.layer.pak"))}</option>` : ""}
+            ${cfg.kind !== "sprite" ? `<option value="pak">${esc(t("exp.layer.pak"))}</option>` : ""}
           </select>
           ${cfg.browse ? `<button type="button" class="ghost2 m-browse">${esc(cfg.browse.label)}</button>` : ""}
         </div>
@@ -105,7 +122,7 @@ function mountListTab(host: HTMLElement, cfg: TabConfig): () => void {
     render: (item) => {
       const row = document.createElement("div");
       row.className = `frow${item.key === cfg.mem.selected ? " selected" : ""}`;
-      row.innerHTML = `${kindBadge(cfg.kind)}<span class="fname"><b>${esc(item.name)}</b>${item.dir ? `<small>${esc(item.dir)}</small>` : ""}</span>${item.layer ? layerChip(item.layer) : ""}<span class="fsize">${item.size != null ? esc(sizeText(item.size)) : ""}</span>`;
+      row.innerHTML = `${kindBadge(item.entry?.kind ?? LIST_KINDS[cfg.kind][0]!)}<span class="fname"><b>${esc(item.name)}</b>${item.dir ? `<small>${esc(item.dir)}</small>` : ""}</span>${item.layer ? layerChip(item.layer) : ""}<span class="fsize">${item.size != null ? esc(sizeText(item.size)) : ""}</span>`;
       return row;
     },
     onSelect: (item) => open_(item),
@@ -222,3 +239,36 @@ const audioCfg: TabConfig = {
 export function mountAudioTab(host: HTMLElement): () => void {
   return mountListTab(host, audioCfg);
 }
+
+// ------------------------------------------------------------------ imagens, mapas, dados
+
+/** lembra busca, camada e seleção de cada subaba entre montagens */
+const memories = new Map<ListKind, TabConfig["mem"]>();
+
+/**
+ * Subaba que lista arquivos de um grupo de tipos e abre cada um no visualizador do explorador
+ * (o mesmo da subaba Arquivos: imagem TGA/BMP, mapa, nav, demo, texto…), inclusive membros de `.pak`.
+ */
+function mountFileGroupTab(host: HTMLElement, kind: ListKind, deps: Omit<ViewerDeps, "open">): () => void {
+  let mem = memories.get(kind);
+  if (!mem) memories.set(kind, (mem = { query: "", layer: "", selected: null }));
+  const cfg: TabConfig = {
+    kind,
+    extras: [],
+    browse: null,
+    mem,
+    mountViewer(viewerHost, item) {
+      if (!item.entry) return () => {};
+      let dispose = mountFileViewer(viewerHost, item.entry, { ...deps, open: (e) => {
+        dispose();
+        dispose = mountFileViewer(viewerHost, e, { ...deps, open: () => {} });
+      } });
+      return () => dispose();
+    },
+  };
+  return mountListTab(host, cfg);
+}
+
+export const mountImagesTab = (host: HTMLElement, deps: Omit<ViewerDeps, "open">) => mountFileGroupTab(host, "image", deps);
+export const mountMapsTab = (host: HTMLElement, deps: Omit<ViewerDeps, "open">) => mountFileGroupTab(host, "map", deps);
+export const mountDataTab = (host: HTMLElement, deps: Omit<ViewerDeps, "open">) => mountFileGroupTab(host, "data", deps);

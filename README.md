@@ -84,6 +84,16 @@ Nenhuma variável guarda segredo. `.env*` está no `.gitignore`.
 |---|---|---|
 | ![paleta](prints/v9-paleta-busca-mapa.png) | ![overview](prints/v9-mcp-map-view-overview.png) | ![spawn](prints/v9-mcp-map-view-spawn.png) |
 
+## Abas da seção Skins
+
+A seção cobre todos os tipos de arquivo do GoldSrc, cada um com a sua aba e contador: modelos (`p_`, `v_`, `w_`,
+TRs, CTs, zumbis e todos os `.mdl`), **Texturas (WAD)**, **Imagens** (TGA/BMP/LMP: céu, sprays, HUD, overviews),
+**Sprites**, **Áudio**, **Mapas (.bsp)**, **Dados e configs** (`.nav`, `.dem`, `.txt`, `.cfg`, `liblist.gam`…) e
+**Arquivos do mod** (tudo, inclusive `.pak`). As abas novas usam o visualizador de cada formato do explorador e
+listam também o conteúdo dos `.pak`. A barra rola na horizontal e a aba ativa fica visível.
+
+![abas](prints/v10-skins-abas.png)
+
 ## Novidades da v0.7
 
 > Tudo abaixo foi escrito a partir do SDK/Xash3D e testado com arquivos **sintéticos**; nenhum arquivo da

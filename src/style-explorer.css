@@ -40,8 +40,15 @@
 
 /* seção Skins: subabas com contador e a lista de modelos do mod */
 .skins-tabs {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.skins-tabs button {
+  flex: none;
+  white-space: nowrap;
 }
 
 .skins-tabs .tab-count {
