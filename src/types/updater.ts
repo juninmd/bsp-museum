@@ -7,3 +7,10 @@ export interface UpdateInfo {
   notes: string;
   date: string | null;
 }
+
+/** Evento `update-progress` emitido durante o download (src-tauri/src/update.rs). */
+export interface UpdateProgress {
+  downloaded: number;
+  total: number | null;
+  done: boolean;
+}

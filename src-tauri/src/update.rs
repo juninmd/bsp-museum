@@ -2,7 +2,7 @@
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 /// A atualização achada pela última verificação; só é instalada se o usuário pedir.
@@ -35,6 +35,14 @@ pub fn summarize(
         notes,
         date,
     }
+}
+
+/// Andamento do download, emitido para a webview (evento `update-progress`).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct ProgressEvent {
+    pub downloaded: u64,
+    pub total: Option<u64>,
+    pub done: bool,
 }
 
 fn failed(e: tauri_plugin_updater::Error) -> String {
@@ -102,8 +110,25 @@ pub async fn update_install(
         .map_err(|_| "estado de atualização indisponível".to_string())?
         .take()
         .ok_or_else(|| "nenhuma atualização pendente: verifique de novo".to_string())?;
+    let mut downloaded: u64 = 0;
+    let progress = app.clone();
+    let finished = app.clone();
     update
-        .download_and_install(|_, _| {}, || {})
+        .download_and_install(
+            move |chunk, total| {
+                downloaded += chunk as u64;
+                let _ = progress.emit(
+                    "update-progress",
+                    ProgressEvent { downloaded, total, done: false },
+                );
+            },
+            move || {
+                let _ = finished.emit(
+                    "update-progress",
+                    ProgressEvent { downloaded: 0, total: None, done: true },
+                );
+            },
+        )
         .await
         .map_err(failed)?;
     app.restart()

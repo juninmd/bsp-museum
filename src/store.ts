@@ -3,7 +3,7 @@ import { emptyAnnotation, isEmptyAnnotation, annotationKey } from "./lib/filters
 import type { Annotation, MapSummary, Settings } from "./types.ts";
 
 /** Estado global mínimo: configurações (persistidas no backend) e o acervo carregado. */
-export const settings: Settings = { last_dir: null, slots: 32, lang: null, theme: null, annotations: {} };
+export const settings: Settings = { last_dir: null, slots: 32, lang: null, theme: null, auto_update: true, annotations: {} };
 export let maps: MapSummary[] = [];
 
 export function setMaps(next: MapSummary[]): void {

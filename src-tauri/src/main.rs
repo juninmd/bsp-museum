@@ -52,14 +52,21 @@ struct Settings {
     /// "dark" | "light"; `None` = decidir pelo sistema
     #[serde(default)]
     theme: Option<String>,
+    /// verifica atualizações ao abrir o app (padrão: ligado)
+    #[serde(default = "default_true")]
+    auto_update: bool,
     #[serde(default)]
     annotations: HashMap<String, Annotation>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { last_dir: None, slots: default_slots(), lang: None, theme: None, annotations: HashMap::new() }
+        Self { last_dir: None, slots: default_slots(), lang: None, theme: None, auto_update: true, annotations: HashMap::new() }
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_slots() -> usize {
