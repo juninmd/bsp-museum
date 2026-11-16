@@ -15,7 +15,9 @@ import {
   type SortKey,
 } from "./lib/filters.ts";
 import { fmtSize } from "./lib/report.ts";
-import { checkForUpdate, installUpdate } from "./lib/updates.ts";
+import { appVersion, checkForUpdate, installUpdate, onUpdateProgress, percent } from "./lib/updates.ts";
+import { openSettings } from "./ui/settings.ts";
+import type { UpdateInfo } from "./types/updater.ts";
 import { annotationOf, applySettings, maps, saveSettings, setMaps, settings, updateAnnotation } from "./store.ts";
 import type { Lang, MapDetail, MapSummary, Settings, Theme } from "./types.ts";
 import { openAudit } from "./ui/audit.ts";
@@ -483,26 +485,49 @@ auditBtn.addEventListener("click", () => {
   );
 });
 
-langBtn.addEventListener("click", async () => {
+async function toggleLang() {
   const next: Lang = getLang() === "pt" ? "en" : "pt";
   settings.lang = next;
   setLang(next);
   refreshLanguage();
   await saveSettings();
-});
+}
+langBtn.addEventListener("click", () => void toggleLang());
 
-themeBtn.addEventListener("click", async () => {
+async function toggleTheme() {
   const next: Theme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
   settings.theme = next;
   applyTheme(next);
   await saveSettings();
+}
+themeBtn.addEventListener("click", () => void toggleTheme());
+
+let knownUpdate: UpdateInfo | null = null;
+void appVersion().then((v) => {
+  document.querySelector<HTMLElement>("#app-version")!.textContent = `v${v}`;
 });
+document.querySelector("#settings-btn")!.addEventListener("click", () =>
+  void openSettings({
+    toggleLang,
+    toggleTheme,
+    setAutoUpdate: async (on) => {
+      settings.auto_update = on;
+      await saveSettings();
+    },
+    autoUpdate: () => settings.auto_update,
+    isDark: () => document.documentElement.dataset.theme !== "light",
+    langLabel: () => (getLang() === "pt" ? "Português" : "English"),
+    known: () => knownUpdate,
+    setStatus,
+  }),
+);
 
 /** Manual: pergunta antes de instalar. Automática (ao abrir): só avisa na barra de status; falhas ficam quietas. */
 async function runUpdate(manual: boolean): Promise<void> {
   if (manual) setStatus(t("update.checking"));
   try {
     const info = await checkForUpdate();
+    knownUpdate = info.available ? info : null;
     if (!info.available) {
       if (manual) setStatus(t("update.upToDate", info.current));
       return;
@@ -515,13 +540,23 @@ async function runUpdate(manual: boolean): Promise<void> {
     const yes = await ask(t("update.confirm", info.latest, notes), { title: t("update.title"), kind: "info" });
     if (!yes) return;
     setStatus(t("update.installing", info.latest));
-    await installUpdate();
+    const off = await onUpdateProgress((p) => {
+      const pct = percent(p);
+      setStatus(p.done ? t("update.verifying") : t("update.downloading", info.latest, pct === null ? "" : `${pct}%`));
+    });
+    try {
+      await installUpdate();
+    } finally {
+      off();
+    }
   } catch (e) {
     if (manual) setStatus(t("update.failed", String(e)), "error");
   }
 }
 updateBtn.addEventListener("click", () => void runUpdate(true));
-setTimeout(() => void runUpdate(false), 8_000);
+setTimeout(() => {
+  if (settings.auto_update) void runUpdate(false);
+}, 8_000);
 
 closeDrawerBtn.addEventListener("click", closeDrawer);
 scrim.addEventListener("click", closeDrawer);

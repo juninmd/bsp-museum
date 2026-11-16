@@ -119,6 +119,8 @@ export interface Settings {
   slots: number;
   lang: Lang | null;
   theme: Theme | null;
+  /** verifica atualizações ao abrir o app */
+  auto_update: boolean;
   /** chave = nome do arquivo do mapa (com extensão, sem pasta) */
   annotations: Record<string, Annotation>;
 }

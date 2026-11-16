@@ -9,3 +9,4 @@ src-tauri/gen/
 
 # Chave privada de assinatura do updater: só no secret do GitHub.
 *.key
+src-tauri/tauri.release.conf.json
