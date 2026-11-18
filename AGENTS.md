@@ -20,11 +20,12 @@ cargo clippy --no-default-features --all-targets -- -D warnings && cargo test --
 ```
 
 ## Gates de CI (todos precisam passar)
-- `ci.yml`: jobs `web` (typecheck, test, build), `rust` e `core` (clippy com `-D warnings` + cargo test). Roda em PR.
+- `ci.yml`: jobs `web` (typecheck, test, build), `rust` e `core` (clippy com `-D warnings` + cargo test). Roda em PR e em push no `master`.
 - `validate.yml` e `security.yml`: reusable workflows do `juninmd/base-actions` (validação, auditoria, varredura de segredos).
-- `release.yml`: só em tag `v*`.
+- `release.yml`: em push no `master`, a cada 6 horas e manual. `scripts/release.ts plan` calcula a versão pelos commits semânticos e chama `release-commit.yml`, que verifica o commit, cria/retoma o rascunho, sobe instaladores + MCP e publica a tag `vX.Y.Z`.
 
 ## Convenções
+- A versão da release vem da tag `vX.Y.Z`, criada por `release.yml` a partir dos commits — não edite `version` em `package.json`/`tauri.conf.json` para "lançar" uma versão.
 - Testes usam arquivos BSP/MDL/WAD sintéticos montados byte a byte; não commite mapas, WADs ou modelos reais da Valve.
 - Parsers tratam o arquivo como entrada hostil: acesso checado, erro legível, nunca `panic`.
 - Textos de interface passam por `src/i18n.ts` (pt e en devem ter as mesmas chaves; há teste de paridade).
@@ -34,7 +35,7 @@ cargo clippy --no-default-features --all-targets -- -D warnings && cargo test --
 - Não commitar `.env*`, chaves ou caminhos locais; `src-tauri/target/`, `dist/` e `node_modules/` ficam fora do git.
 - Não editar `bun.lock` nem `src-tauri/Cargo.lock` à mão; regenere com `bun install` / `cargo`.
 - Não suprimir warning do clippy nem pular teste para passar o gate.
-- Não ligar o updater do Tauri sem o par de chaves: a privada fica só no secret `TAURI_SIGNING_PRIVATE_KEY`; a pública vai em `src-tauri/tauri.updater.conf.json` (ver `release.yml`).
+- Não ligar o updater do Tauri sem o par de chaves: a privada fica só no secret `TAURI_SIGNING_PRIVATE_KEY`; a pública vai em `src-tauri/tauri.updater.conf.json` (ver `release-commit.yml`).
 
 <!-- base-actions-main-policy -->
 ## GitHub Actions — padrão obrigatório (@main)

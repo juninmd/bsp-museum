@@ -466,9 +466,25 @@ a textura dele. Partes puras (tabela de skin, projeção UV, acerto de triângul
 | `ci.yml` (CI) | pull requests | `web`: `bun install --frozen-lockfile`, `bun run typecheck`, `bun test`, `bun run build`. `rust`: `cargo clippy --all-targets -- -D warnings` e `cargo test` em `src-tauri` (com GTK/WebKit). `core`: o mesmo com `--no-default-features` (núcleo + MCP). |
 | `validate.yml` (Validate) | pull requests e push em `master` | validação padrão do `juninmd/base-actions` (`reusable-validate.yml`): instalação, lint, testes e auditoria de dependências. |
 | `security.yml` (Security Scan) | push em `master`, semanal (domingo) e manual | varredura de segurança do `juninmd/base-actions` (`reusable-security-scan.yml`). |
-| `release.yml` (Release) | tag `v*` e manual | instaladores Tauri (Windows, Linux, macOS arm64/Intel) como release em rascunho e binário `bsp-museum-mcp` por plataforma. |
+| `release.yml` (Release) | push em `master`, a cada 6 horas e manual | calcula a versão pelos commits semânticos desde a última release publicada (`feat`=minor, `fix`/`perf`/`refactor`=patch, `!`/`BREAKING CHANGE`=major) e publica aquele commit. `chore`/`docs`/`ci`/`test`/`build`/`style` não geram release. |
+| `release-commit.yml` (Publish commit) | chamado pelo `release.yml` | `verify` (typecheck, `bun test`, build, clippy `-D warnings` e `cargo test`, com e sem `--no-default-features`) ao lado de `prepare` (changelog + rascunho) e dos instaladores (Windows, Linux, macOS arm64/Intel) e do `bsp-museum-mcp` por plataforma. O rascunho só é publicado com o `verify` verde. |
 
-O gatilho de push do `ci.yml` aponta para `main`, mas a branch padrão é `master`: hoje o CI roda só em pull request.
+O gatilho de push do `ci.yml` cobre `master`; os pull requests também rodam o CI.
+
+### Releases
+
+A versão sai dos commits, não de um `bump` manual: cada push em `master` agenda um release por commit semântico,
+com a tag `vX.Y.Z` criada na publicação (é a tag que manda — `tauri.conf.json` fica só com a versão de
+desenvolvimento). O rascunho nasce em `release-commit.yml` e é retomado se já existir, então um runner interrompido
+não deixa release pela metade: a agenda de 6 em 6 horas recoloca a fila de pé. Para ver o que sairia agora:
+
+```bash
+bun scripts/release.ts plan   # precisa de gh autenticado; imprime o candidato em JSON
+```
+
+A primeira release de um repositório sem release publicada junta todo o histórico desde a última tag em um único
+release. Os instaladores assinados e o `latest.json` só existem com o secret `TAURI_SIGNING_PRIVATE_KEY`; sem ele a
+release é publicada com os instaladores e o app não se atualiza sozinho.
 
 ## Testes
 
@@ -543,4 +559,5 @@ JSON gerados pelo backend em Rust (WebGL via SwiftShader).
 - Atualização automática pelas releases do GitHub (`tauri-plugin-updater`): o botão ↻ verifica e, após confirmação,
   instala e reinicia. Liga com os secrets `TAURI_SIGNING_PRIVATE_KEY` e `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` e a chave
   pública em `src-tauri/tauri.updater.conf.json`. Sem o secret, os instaladores saem sem atualização automática.
-  Publicar o rascunho do release torna o `latest.json` acessível ao app.
+  O `latest.json` é montado e conferido no `release-commit.yml` a partir das assinaturas dos instaladores, e a release
+  só é publicada (e vira `latest`) depois disso.

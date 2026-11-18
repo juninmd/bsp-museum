@@ -27,6 +27,8 @@ jobs:
   rust:
     name: Backend (clippy, testes)
     runs-on: ubuntu-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v7
       - name: Dependências do Tauri
@@ -41,6 +43,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: debug
       - name: Clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
@@ -51,6 +54,8 @@ jobs:
   core:
     name: Núcleo + MCP (sem GTK)
     runs-on: ubuntu-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -59,6 +64,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: core
       - name: Clippy
         working-directory: src-tauri
         run: cargo clippy --no-default-features --all-targets -- -D warnings

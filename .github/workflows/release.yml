@@ -1,173 +1,78 @@
 name: Release
 
-# Commit semântico no master → calcula a versão (feat=minor, fix/perf=patch, !/BREAKING=major),
-# gera os instaladores com essa versão, cria a tag vX.Y.Z e publica o release (latest.json incluso)
-# para o app se atualizar sozinho. chore/docs/ci/refactor/test não geram release.
-# Atualização automática: só liga com o secret TAURI_SIGNING_PRIVATE_KEY (+ pubkey em
-# src-tauri/tauri.updater.conf.json). Sem ele o build sai sem assinatura.
-# O release nasce como rascunho e só é publicado depois de todos os binários subirem.
+# Commit semântico no master → calcula a versão e publica aquele commit como release:
+# feat=minor, fix/perf/refactor=patch, !/BREAKING CHANGE=major. chore/docs/ci/test/build/style não geram release.
+# Cada release nasce como rascunho (release-commit.yml), recebe os instaladores e o bsp-museum-mcp e só é publicada
+# com o verify verde. A agenda de 6 em 6 horas retoma um rascunho interrompido e drena a fila (um release por commit).
+# A tag vX.Y.Z é criada na publicação; é a fonte da versão, não o tauri.conf.json.
+# Atualização automática: só liga com TAURI_SIGNING_PRIVATE_KEY (+ chave pública em tauri.updater.conf.json);
+# sem a chave a release sai sem latest.json e o app não se atualiza sozinho.
 
 on:
   push:
     branches: [master]
+  schedule:
+    - cron: "17 */6 * * *"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release
+  group: release-master
   cancel-in-progress: false
 
 jobs:
   plan:
     name: Planejar versão
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     outputs:
-      release: ${{ steps.plan.outputs.release }}
-      version: ${{ steps.plan.outputs.version }}
-      tag: ${{ steps.plan.outputs.tag }}
+      candidate: ${{ steps.releases.outputs.candidate }}
+      more: ${{ steps.releases.outputs.more }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
+      - run: git fetch origin master --tags
       - uses: oven-sh/setup-bun@v2
-      - id: plan
-        run: |
-          bun scripts/release-plan.ts > plan.json
-          cat plan.json
-          {
-            echo "release=$(jq -r .release plan.json)"
-            echo "version=$(jq -r .version plan.json)"
-            echo "tag=$(jq -r .tag plan.json)"
-          } >> "$GITHUB_OUTPUT"
-          jq -r .notes plan.json > notes.md
-          if git ls-remote --exit-code --tags origin "refs/tags/$(jq -r .tag plan.json)" >/dev/null 2>&1; then
-            echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "Tag já existe: nada a fazer."
-          fi
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-notes
-          path: notes.md
-
-  bundle:
-    name: ${{ matrix.label }}
-    needs: plan
-    if: needs.plan.outputs.release == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { label: Windows, os: windows-latest }
-          - { label: Linux, os: ubuntu-22.04 }
-          - { label: macOS (Apple Silicon), os: macos-latest, args: "--target aarch64-apple-darwin" }
-          - { label: macOS (Intel), os: macos-13, args: "--target x86_64-apple-darwin" }
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: Dependências do Tauri (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev librsvg2-dev patchelf
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - name: Atualização automática (só com a chave de assinatura)
-        id: updater
-        shell: bash
-        env:
-          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          if [ -z "$SIGNING_KEY" ]; then
-            echo "TAURI_SIGNING_PRIVATE_KEY ausente: build sem atualização automática."
-            echo "args=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if grep -q PREENCHER src-tauri/tauri.updater.conf.json; then
-            echo "::error::src-tauri/tauri.updater.conf.json ainda tem a chave pública de exemplo"
-            exit 1
-          fi
-          echo "args=--config src-tauri/tauri.updater.conf.json" >> "$GITHUB_OUTPUT"
-      - name: Versão da release
-        shell: bash
-        run: echo '{"version":"${{ needs.plan.outputs.version }}"}' > src-tauri/tauri.release.conf.json
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-notes
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-      - uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ needs.plan.outputs.tag }}
-          releaseName: "bsp-museum ${{ needs.plan.outputs.tag }}"
-          releaseBody: "Veja as mudanças abaixo."
-          releaseDraft: true
-          uploadUpdaterJson: true
-          updaterJsonPreferNsis: true
-          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json ${{ steps.updater.outputs.args }}
-
-  mcp:
-    name: Servidor MCP (${{ matrix.label }})
-    needs: [plan, bundle]
-    if: needs.plan.outputs.release == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { label: Windows, os: windows-latest, ext: ".exe", asset: windows-x64 }
-          - { label: Linux, os: ubuntu-22.04, ext: "", asset: linux-x64 }
-          - { label: macOS (Apple Silicon), os: macos-latest, ext: "", asset: macos-arm64 }
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-      - name: Compila (sem interface gráfica)
-        working-directory: src-tauri
-        run: cargo build --release --no-default-features --bin bsp-museum-mcp
-      - name: Anexa ao release (rascunho)
-        shell: bash
+      - id: releases
+        run: bun scripts/release.ts plan
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cp "src-tauri/target/release/bsp-museum-mcp${{ matrix.ext }}" "bsp-museum-mcp-${{ matrix.asset }}${{ matrix.ext }}"
-          gh release upload "${{ needs.plan.outputs.tag }}" "bsp-museum-mcp-${{ matrix.asset }}${{ matrix.ext }}" --clobber || echo "release ainda não existe; artefato não anexado"
 
   publish:
-    name: Publicar release
-    needs: [plan, bundle, mcp]
-    runs-on: ubuntu-latest
+    name: Publicar commit
+    needs: plan
+    if: needs.plan.outputs.candidate != '{}'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-commit.yml
+    with:
+      sha: ${{ fromJSON(needs.plan.outputs.candidate).sha }}
+      tag: ${{ fromJSON(needs.plan.outputs.candidate).tag }}
+      version: ${{ fromJSON(needs.plan.outputs.candidate).version }}
+      previous-tag: ${{ fromJSON(needs.plan.outputs.candidate).previousTag }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+  next:
+    name: Continuar a fila
+    needs: [plan, publish]
+    if: needs.plan.outputs.more == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-notes
-      - uses: actions/checkout@v7
-      - name: Confere o manifesto e publica
+      - run: gh workflow run release.yml --ref master --repo "$GITHUB_REPOSITORY"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.plan.outputs.tag }}
-          VERSION: ${{ needs.plan.outputs.version }}
-        run: |
-          assets=$(gh release view "$TAG" --json assets -q '.assets[].name')
-          echo "$assets"
-          if echo "$assets" | grep -q '^latest.json$'; then
-            gh release download "$TAG" -p latest.json -O latest.json
-            test "$(jq -r .version latest.json)" = "$VERSION" || { echo "::error::latest.json com versão errada"; exit 1; }
-            jq -e '.platforms | length > 0' latest.json >/dev/null
-          else
-            echo "Sem latest.json (build sem assinatura): publicando sem atualização automática."
-          fi
-          gh release edit "$TAG" --draft=false --latest --notes-file notes.md --target "${{ github.sha }}"
