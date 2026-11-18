@@ -1,0 +1,8 @@
+# Falsos positivos confirmados manualmente.
+# Formato: commit:arquivo:regra:linha (fingerprint exato; segredo novo no mesmo
+# arquivo continua sendo detectado). Não usar path allowlist para isso.
+
+# Chave PÚBLICA do updater (minisign): o app usa para conferir a assinatura das
+# atualizações, então ela é pública por definição. A privada fica só no secret
+# TAURI_SIGNING_PRIVATE_KEY e nunca entrou no repositório.
+1a330d16e8993b410044042c3c99c2f5a4379e8e:src-tauri/tauri.updater.conf.json:generic-api-key:6
