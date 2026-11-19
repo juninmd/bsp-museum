@@ -158,6 +158,7 @@ export const DICT: Record<string, [string, string]> = {
   "detail.texUsed": ["{0} textura(s) usadas", "{0} texture(s) used"],
 
   // visões e viewer
+  "view.label": ["Modo de visualização", "View mode"],
   "view.plan": ["Planta", "Plan"],
   "view.3d": ["3D", "3D"],
   "view.tex": ["3D + texturas", "3D + textures"],
