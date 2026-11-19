@@ -120,10 +120,10 @@ export function detailHtml(d: MapDetail, map: MapSummary): string {
     ${s.title ? `<p class="title">“${escapeHtml(s.title)}”</p>` : ""}
 
     <div class="plan-toolbar">
-      <div class="seg" role="tablist">
-        <button data-view="plan" class="active">${escapeHtml(t("view.plan"))}</button>
-        <button data-view="3d">${escapeHtml(t("view.3d"))}</button>
-        <button data-view="tex">${escapeHtml(t("view.tex"))}</button>
+      <div class="seg" role="group" aria-label="${escapeHtml(t("view.label"))}">
+        <button type="button" data-view="plan" class="active" aria-pressed="true">${escapeHtml(t("view.plan"))}</button>
+        <button type="button" data-view="3d" aria-pressed="false">${escapeHtml(t("view.3d"))}</button>
+        <button type="button" data-view="tex" aria-pressed="false">${escapeHtml(t("view.tex"))}</button>
       </div>
       <span class="dim">${escapeHtml(t("detail.polygons", d.polygons))}</span>
     </div>
@@ -287,7 +287,11 @@ export function wireDetail(root: HTMLElement, d: MapDetail, map: MapSummary, ctx
     activeViewer = null;
     planHolder.hidden = next !== "plan";
     viewerHolder.hidden = next === "plan";
-    for (const b of buttons) b.classList.toggle("active", b.dataset.view === next);
+    for (const b of buttons) {
+      const on = b.dataset.view === next;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
     controlsBar.hidden = next === "plan";
     $<HTMLElement>(root, "#lm-wrap").hidden = next !== "tex";
     if (next === "plan") {
