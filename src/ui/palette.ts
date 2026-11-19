@@ -111,8 +111,12 @@ export function initPalette(source: () => PaletteCommand[], opener?: HTMLElement
     if (!li) return;
     const i = Number(li.dataset.i);
     if (i !== active) {
-      list.querySelector(".active")?.classList.remove("active");
+      const prev = list.querySelector(".active");
+      prev?.classList.remove("active");
+      prev?.setAttribute("aria-selected", "false");
       li.classList.add("active");
+      li.setAttribute("aria-selected", "true");
+      input.setAttribute("aria-activedescendant", li.id);
       active = i;
     }
   });
