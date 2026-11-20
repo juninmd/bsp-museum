@@ -98,8 +98,17 @@ export function filterAndSort(
     );
   });
 
-  const weight = (m: MapSummary) =>
-    problemsOf(m, slots).reduce((sum, p) => sum + (p.severity === "critical" ? 100 : p.severity === "warn" ? 10 : 0), 0);
+  // Peso calculado uma vez por mapa: dentro do comparador seria O(n log n) chamadas a problemsOf.
+  const weights =
+    f.sort === "problems"
+      ? new Map(
+          list.map((m) => [
+            m,
+            problemsOf(m, slots).reduce((sum, p) => sum + (p.severity === "critical" ? 100 : p.severity === "warn" ? 10 : 0), 0),
+          ]),
+        )
+      : null;
+  const weight = (m: MapSummary) => weights?.get(m) ?? 0;
   return [...list].sort((a, b) => {
     switch (f.sort) {
       case "size":
