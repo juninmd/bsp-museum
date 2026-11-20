@@ -23,7 +23,8 @@ function onKey(e: KeyboardEvent) {
  */
 export function openModal(heading: string, close?: () => void): { body: HTMLElement; alive: () => boolean } {
   const mine = ++generation;
-  returnFocus = document.activeElement as HTMLElement | null;
+  // Substituindo um diálogo aberto, o foco atual está dentro dele: volta para quem abriu o primeiro.
+  if (modal().hidden) returnFocus = document.activeElement as HTMLElement | null;
   onClose = close ?? null;
   title().textContent = heading;
   body().replaceChildren();
