@@ -127,7 +127,8 @@ export function filterAndSort(
 
 /** Normaliza o texto digitado como tag: minúsculas, sem espaços nas pontas, sem vírgula. */
 export function normalizeTag(raw: string): string {
-  return raw.trim().toLowerCase().replace(/[,;]+/g, " ").replace(/\s+/g, "-").slice(0, 32);
+  // trim depois de trocar vírgula por espaço; o corte em 32 pode deixar um hífen solto no fim
+  return raw.toLowerCase().replace(/[,;]+/g, " ").trim().replace(/\s+/g, "-").slice(0, 32).replace(/-+$/, "");
 }
 
 export function emptyAnnotation(): Annotation {

@@ -113,6 +113,11 @@ describe("anotações", () => {
   test("normalizeTag", () => {
     expect(normalizeTag("  Meu Mapa, Bom ")).toBe("meu-mapa-bom");
     expect(normalizeTag("x".repeat(80)).length).toBe(32);
+    expect(normalizeTag("abc,")).toBe("abc");
+    expect(normalizeTag("fav;")).toBe("fav");
+    expect(normalizeTag(", x")).toBe("x");
+    expect(normalizeTag(",;")).toBe("");
+    expect(normalizeTag(`${"a".repeat(31)} b`)).toBe("a".repeat(31));
   });
   test("anotação vazia é descartável", () => {
     expect(isEmptyAnnotation({ favorite: false, tags: [], note: "  " })).toBe(true);
